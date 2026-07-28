@@ -1,0 +1,9 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "metadata.json": "11592152e096882e1e1bb22bbc853c17ef8a9bcc5faf427cc0938df53e327a0e",
+    "metrics.json": "e3aba2733517b300554be3496b6116b31dd309eee1b4d83de13a6f278fac6764",
+    "synthetic-samples.csv": "7e033aef431573642fa5b5d6cc147794647084aa2c3323056e5a39a30081d146",
+    "xgboost-model.json": "172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d"
+  }
+}

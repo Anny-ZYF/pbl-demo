@@ -1,0 +1,111 @@
+{
+  "artifactUri": "algorithm-service://artifacts/xgboost-model.json",
+  "createdAt": "2026-07-15T07:20:20.452129+00:00",
+  "crossValidation": {
+    "folds": 5,
+    "method": "deterministic_stratified_round_robin"
+  },
+  "datasetRows": 1785,
+  "datasetSha256": "7e033aef431573642fa5b5d6cc147794647084aa2c3323056e5a39a30081d146",
+  "eligibilityThresholds": {
+    "maeMax": 0.8,
+    "r2Min": 0.99,
+    "rmseMax": 1.0
+  },
+  "featureOrder": [
+    "contribution",
+    "actual_group_size",
+    "group_score"
+  ],
+  "featureSchema": [
+    {
+      "jsonField": "contribution",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "name": "contribution",
+      "type": "float64"
+    },
+    {
+      "jsonField": "actualGroupSize",
+      "maximum": 5,
+      "minimum": 1,
+      "name": "actual_group_size",
+      "type": "int32"
+    },
+    {
+      "jsonField": "groupScore",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "name": "group_score",
+      "type": "float64"
+    }
+  ],
+  "gate": {
+    "equals": 4,
+    "jsonField": "standardGroupSize"
+  },
+  "modelFormat": "xgboost-json",
+  "modelKey": "paper-score-p4",
+  "modelSha256": "172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d",
+  "modelType": "xgboost-regression",
+  "parameters": {
+    "colsample_bytree": 1.0,
+    "eval_metric": "rmse",
+    "learning_rate": 0.04,
+    "max_depth": 6,
+    "min_child_weight": 0.5,
+    "n_estimators": 800,
+    "n_jobs": 1,
+    "objective": "reg:squarederror",
+    "random_state": 2025,
+    "reg_alpha": 0.0,
+    "reg_lambda": 1.0,
+    "subsample": 1.0,
+    "tree_method": "hist"
+  },
+  "ruleVersion": "paper-mcqs-v1",
+  "schemaVersion": 1,
+  "search": {
+    "executed": false,
+    "method": "BayesSearchCV",
+    "note": "Artifact uses checked-in deterministic tuned parameters; run with --search to execute Bayesian search.",
+    "requested": false
+  },
+  "seed": 2025,
+  "split": {
+    "distribution": {
+      "1": {
+        "test": 4,
+        "total": 21,
+        "training": 17
+      },
+      "2": {
+        "test": 88,
+        "total": 441,
+        "training": 353
+      },
+      "3": {
+        "test": 88,
+        "total": 441,
+        "training": 353
+      },
+      "4": {
+        "test": 88,
+        "total": 441,
+        "training": 353
+      },
+      "5": {
+        "test": 88,
+        "total": 441,
+        "training": 353
+      }
+    },
+    "holdoutFraction": 0.2,
+    "method": "deterministic_stratified_by_actual_group_size"
+  },
+  "standardGroupSize": 4,
+  "status": "ELIGIBLE",
+  "testRows": 356,
+  "trainingRows": 1429,
+  "version": "xgb-p4-seed2025-172a3cf9486e"
+}

@@ -1,0 +1,30 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.zip binary
+# Node
+node_modules/
+**/node_modules/
+dist/
+
+# Java
+target/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Prototype frontend (not included in main repo)
+vue-project/

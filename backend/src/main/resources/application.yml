@@ -1,0 +1,77 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: native
+  error:
+    include-message: never
+
+spring:
+  application:
+    name: groupwork
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/groupwork?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
+    validate-migration-naming: true
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    jdbc-type-for-null: 'NULL'
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+app:
+  jwt:
+    secret-base64: ${JWT_SECRET_BASE64:}
+    access-ttl: ${JWT_ACCESS_TTL:30m}
+    refresh-ttl: ${JWT_REFRESH_TTL:7d}
+    issuer: ${JWT_ISSUER:groupwork-api}
+  web:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  model:
+    base-url: ${MODEL_SERVICE_URL:http://127.0.0.1:8000}
+    token: ${MODEL_SERVICE_TOKEN:}
+    connect-timeout: ${MODEL_CONNECT_TIMEOUT:2s}
+    read-timeout: ${MODEL_READ_TIMEOUT:5s}
+  storage:
+    root: ${STORAGE_ROOT:./data/uploads}
+  bootstrap-admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+    display-name: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:系统管理员}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-no-request}] %logger{36} - %msg%n"
+  level:
+    root: INFO
+    com.gdmu: INFO

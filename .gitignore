@@ -1,0 +1,52 @@
+# Secrets and local runtime configuration
+.env
+.env.local
+application-local.yml
+
+# Java
+/backend/target/
+*.class
+*.log
+
+# Frontend
+**/node_modules/
+**/dist/
+npm-debug.log*
+
+# Python
+**/.venv/
+**/.testdeps/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+*.py[cod]
+
+# Runtime data
+/data/
+/algorithm-service/data/generated/*.tmp
+
+# IDE, assistants and OS files
+/.idea/
+/.vscode/
+/.claude/
+/.codex/
+/.agents/
+/.kiro/
+/.trae/
+/.playwright-mcp/
+.mcp.json
+/.mcp/
+.DS_Store
+Thumbs.db
+
+# Local backups and reports
+*.bak
+*.dump
+coverage/
+playwright-report/
+test-results/
+
+# Root-level stray files (do not affect frontend/ or algorithm-service/)
+/package.json
+/package-lock.json
+vue-project/

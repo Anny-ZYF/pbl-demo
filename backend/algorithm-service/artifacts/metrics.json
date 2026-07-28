@@ -1,0 +1,75 @@
+{
+  "crossValidation": {
+    "folds": [
+      {
+        "fold": 1,
+        "mae": 0.5330266390960318,
+        "r2": 0.9992800323594445,
+        "rmse": 0.738169962557685,
+        "trainingRows": 1141,
+        "validationRows": 288
+      },
+      {
+        "fold": 2,
+        "mae": 0.5110744653524123,
+        "r2": 0.9993865107828059,
+        "rmse": 0.7505811283045271,
+        "trainingRows": 1141,
+        "validationRows": 288
+      },
+      {
+        "fold": 3,
+        "mae": 0.4803373301518584,
+        "r2": 0.9993291437662032,
+        "rmse": 0.7222244703739796,
+        "trainingRows": 1142,
+        "validationRows": 287
+      },
+      {
+        "fold": 4,
+        "mae": 0.5584900185271172,
+        "r2": 0.9992217800031219,
+        "rmse": 0.7668524556143941,
+        "trainingRows": 1146,
+        "validationRows": 283
+      },
+      {
+        "fold": 5,
+        "mae": 0.5436750014244027,
+        "r2": 0.9990761812801441,
+        "rmse": 0.8522332951790953,
+        "trainingRows": 1146,
+        "validationRows": 283
+      }
+    ],
+    "summary": {
+      "mae": {
+        "mean": 0.5253206909103645,
+        "std": 0.027287082417185433
+      },
+      "r2": {
+        "mean": 0.999258729638344,
+        "std": 0.00010623479169555587
+      },
+      "rmse": {
+        "mean": 0.7660122624059362,
+        "std": 0.04553121282950235
+      }
+    }
+  },
+  "eligibility": {
+    "passed": true,
+    "thresholds": {
+      "maeMax": 0.8,
+      "r2Min": 0.99,
+      "rmseMax": 1.0
+    }
+  },
+  "holdout": {
+    "mae": 0.3568366848927593,
+    "r2": 0.9997004404015497,
+    "rmse": 0.48289938040393227
+  },
+  "note": "Metrics measure fit to deterministic rule-generated labels.",
+  "status": "ELIGIBLE"
+}
