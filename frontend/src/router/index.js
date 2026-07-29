@@ -82,6 +82,24 @@ const routes = [
         meta: { title: '课程首页' }
       },
       {
+        path: 'course/:courseId/assignments',
+        name: 'teacher-assignments',
+        component: () => import('@/views/teacher/TeacherAssignmentsView.vue'),
+        meta: { title: '作业管理' }
+      },
+      {
+        path: 'course/:courseId/assignments/create',
+        name: 'teacher-assignment-create',
+        component: () => import('@/views/teacher/TeacherAssignmentCreateView.vue'),
+        meta: { title: '创建作业' }
+      },
+      {
+        path: 'course/:courseId/assignments/:assignmentId/grading',
+        name: 'teacher-assignment-grading',
+        component: () => import('@/views/teacher/TeacherAssignmentGradingView.vue'),
+        meta: { title: '批改作业' }
+      },
+      {
         path: 'dashboard',
         name: 'teacher-dashboard',
         component: () => import('@/views/teacher/TeacherDashboardView.vue'),
