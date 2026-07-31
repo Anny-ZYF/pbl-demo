@@ -28,8 +28,8 @@ public interface ScoringMapper {
             WHERE s.id=#{submissionId} AND a.teacher_id=#{teacherId}
               AND s.is_latest=1 AND s.status='GRADED' AND s.teacher_score IS NOT NULL
             """)
-    Optional<SubmissionContext> submissionContext(@Param("submissionId") long submissionId,
-                                                  @Param("teacherId") long teacherId);
+    SubmissionContext submissionContext(@Param("submissionId") long submissionId,
+                                        @Param("teacherId") long teacherId);
 
     @Select("""
             SELECT id,part_name AS name,weight FROM assignment_parts
@@ -139,8 +139,8 @@ public interface ScoringMapper {
             WHERE ws.assignment_id=#{assignmentId} AND wc.student_id=#{studentId}
             ORDER BY ws.version_no DESC LIMIT 1
             """)
-    Optional<Map<String, Object>> studentWorkload(@Param("assignmentId") long assignmentId,
-                                                  @Param("studentId") long studentId);
+    Map<String, Object> studentWorkload(@Param("assignmentId") long assignmentId,
+                                        @Param("studentId") long studentId);
 
     @Select("""
             SELECT ws.id,ws.version_no AS versionNo,ws.status,ws.submitted_at AS submittedAt,ws.locked_at AS lockedAt
@@ -148,9 +148,9 @@ public interface ScoringMapper {
             WHERE ws.assignment_id=#{assignmentId} AND ws.group_id=#{groupId} AND a.teacher_id=#{teacherId}
             ORDER BY ws.version_no DESC LIMIT 1
             """)
-    Optional<Map<String, Object>> teacherWorkload(@Param("assignmentId") long assignmentId,
-                                                  @Param("groupId") long groupId,
-                                                  @Param("teacherId") long teacherId);
+    Map<String, Object> teacherWorkload(@Param("assignmentId") long assignmentId,
+                                        @Param("groupId") long groupId,
+                                        @Param("teacherId") long teacherId);
 
     @Select("""
             SELECT wc.student_id AS studentId,s.name AS studentName,wc.status,wc.comment,wc.confirmed_at AS confirmedAt
@@ -209,7 +209,7 @@ public interface ScoringMapper {
             WHERE mv.status='ACTIVE' AND mv.algorithm='XGBOOST' AND mv.model_key='paper-score-p4'
             ORDER BY mv.activated_at DESC LIMIT 1
             """)
-    Optional<ActiveModelRow> activeModel();
+    ActiveModelRow activeModel();
 
     @Insert("""
             INSERT INTO scoring_run(run_no,assignment_id,group_id,submission_id,scoring_rule_id,model_version_id,
@@ -265,7 +265,7 @@ public interface ScoringMapper {
             FROM scoring_run sr JOIN assignment a ON a.id=sr.assignment_id
             WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId}
             """)
-    Optional<Map<String, Object>> teacherRun(@Param("runId") long runId, @Param("teacherId") long teacherId);
+    Map<String, Object> teacherRun(@Param("runId") long runId, @Param("teacherId") long teacherId);
 
     @Select("""
             SELECT r.id,r.student_id AS studentId,s.name AS studentName,r.contribution,r.group_score AS groupScore,
@@ -373,8 +373,8 @@ public interface ScoringMapper {
             SELECT id,student_id AS studentId,status,published_at AS publishedAt
             FROM score_result WHERE id=#{resultId} AND student_id=#{studentId} AND status='PUBLISHED'
             """)
-    Optional<PublishedScoreRow> publishedScore(@Param("resultId") long resultId,
-                                               @Param("studentId") long studentId);
+    PublishedScoreRow publishedScore(@Param("resultId") long resultId,
+                                     @Param("studentId") long studentId);
 
     @Select("""
             SELECT COUNT(*) FROM score_appeal

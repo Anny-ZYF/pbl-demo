@@ -45,6 +45,38 @@ public class TeachingService {
         return mapper.courseStudents(courseId, assignmentId);
     }
 
+    public List<Map<String, Object>> teacherScores(UserPrincipal teacher, long courseId, long assignmentId) {
+        require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
+        Long assignmentCourse = mapper.assignmentCourse(assignmentId, teacher.id());
+        require(assignmentCourse != null && assignmentCourse == courseId, HttpStatus.BAD_REQUEST, "作业不属于该课程");
+        return mapper.teacherScores(courseId, assignmentId);
+    }
+
+    @Transactional
+    public StudentCourseUpdateResult importStudents(UserPrincipal teacher, long courseId, StudentImportRequest request) {
+        require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
+        int success = 0, skipped = 0;
+        List<String> notFound = new ArrayList<>();
+        for (String rawNo : new LinkedHashSet<>(request.studentNos())) {
+            String studentNo = rawNo == null ? "" : rawNo.trim();
+            Long studentId = mapper.studentIdByNo(studentNo);
+            if (studentId == null) { notFound.add(studentNo); continue; }
+            String status = mapper.studentCourseStatus(studentId, courseId);
+            if ("ACTIVE".equals(status)) { skipped++; continue; }
+            mapper.importStudent(studentId, courseId); success++;
+        }
+        auditService.record(teacher, "STUDENTS_IMPORTED", "COURSE", courseId,
+                Map.of("success", success, "skipped", skipped, "notFound", notFound.size()));
+        return new StudentCourseUpdateResult(success, skipped, notFound);
+    }
+
+    @Transactional
+    public void dropStudent(UserPrincipal teacher, long courseId, long studentId) {
+        require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
+        require(mapper.dropStudent(studentId, courseId) == 1, HttpStatus.CONFLICT, "学生不在当前课程中或已经被移除");
+        auditService.record(teacher, "STUDENT_DROPPED", "COURSE", courseId, Map.of("studentId", studentId));
+    }
+
     @Transactional
     public Map<String, Object> createAssignment(UserPrincipal teacher, long courseId, AssignmentCreateRequest request) {
         require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
@@ -148,10 +180,10 @@ public class TeachingService {
                             + "/[0-9a-fA-F-]{36}\\.[A-Za-z0-9]{1,8}"),
                     HttpStatus.BAD_REQUEST, "附件必须由当前学生账号上传");
         }
-        Optional<Map<String, Object>> existing = mapper.lockSubmission(assignmentId, groupId);
-        if (existing.isPresent()) {
-            String status = String.valueOf(existing.get().get("status"));
-            Object publishedValue = existing.get().get("isScorePublished");
+        Map<String, Object> existing = mapper.lockSubmission(assignmentId, groupId);
+        if (existing != null) {
+            String status = String.valueOf(existing.get("status"));
+            Object publishedValue = existing.get("isScorePublished");
             boolean published = publishedValue instanceof Boolean booleanValue ? booleanValue
                     : publishedValue instanceof Number numberValue && numberValue.intValue() == 1;
             require(!published && (status.equals("DRAFT") || status.equals("SUBMITTED") || status.equals("RETURNED")),

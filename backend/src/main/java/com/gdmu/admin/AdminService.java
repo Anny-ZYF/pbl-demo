@@ -205,8 +205,8 @@ public class AdminService {
 
     @Transactional
     public void activateModel(UserPrincipal admin, long id) {
-        Map<String, Object> model = mapper.modelForActivation(id)
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "模型版本不存在"));
+        Map<String, Object> model = mapper.modelForActivation(id);
+        if (model == null) throw new BusinessException(HttpStatus.NOT_FOUND, "模型版本不存在");
         String status = String.valueOf(model.get("status"));
         if (!("VALIDATED".equals(status) || "RETIRED".equals(status))) {
             throw new BusinessException(HttpStatus.CONFLICT, "只有已验证或已停用模型可以激活");

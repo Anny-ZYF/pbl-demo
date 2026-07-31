@@ -52,6 +52,45 @@ public interface TeachingMapper {
     List<Map<String, Object>> courseStudents(@Param("courseId") long courseId,
                                              @Param("assignmentId") Long assignmentId);
 
+    @Select("""
+            SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
+                   g.name AS groupName,fs.score AS finalScore,
+                   r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
+                   r.status AS scoringStatus,COALESCE(i.is_published, 0) AS scorePublished,
+                   i.contribution_ratio AS contributionRatio,i.teacher_score AS groupScore,
+                   i.individual_final_score AS individualFinalScore
+            FROM student_course sc JOIN student_users s ON s.id=sc.student_id
+            LEFT JOIN group_member gm ON gm.student_id=s.id AND gm.status='ACTIVE'
+              AND gm.group_id IN (SELECT id FROM group_table WHERE assignment_id=#{assignmentId})
+            LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=#{assignmentId}
+            LEFT JOIN final_score fs ON fs.student_id=s.id AND fs.assignment_id=#{assignmentId}
+            LEFT JOIN scoring_run sr ON sr.id=(SELECT sr2.id FROM scoring_run sr2 WHERE sr2.assignment_id=#{assignmentId} ORDER BY sr2.id DESC LIMIT 1)
+            LEFT JOIN score_result r ON r.student_id=s.id AND r.scoring_run_id=sr.id
+            LEFT JOIN individual_score i ON i.student_id=s.id AND i.submission_id=(
+              SELECT sub.id FROM submission sub WHERE sub.assignment_id=#{assignmentId}
+                AND sub.group_id=g.id AND sub.is_latest=1 ORDER BY sub.id DESC LIMIT 1)
+            WHERE sc.course_id=#{courseId} AND sc.status='ACTIVE' AND s.status=1
+            ORDER BY s.student_user_id
+            """)
+    List<Map<String, Object>> teacherScores(@Param("courseId") long courseId,
+                                            @Param("assignmentId") long assignmentId);
+
+    @Select("SELECT id FROM student_users WHERE student_user_id=#{studentNo} AND status=1")
+    Long studentIdByNo(String studentNo);
+
+    @Insert("""
+            INSERT INTO student_course(student_id,course_id,status,join_method,join_time,create_time,update_time)
+            VALUES(#{studentId},#{courseId},'ACTIVE','IMPORT',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE status='ACTIVE',join_method='IMPORT',join_time=CURRENT_TIMESTAMP,update_time=CURRENT_TIMESTAMP
+            """)
+    int importStudent(@Param("studentId") long studentId, @Param("courseId") long courseId);
+
+    @Select("SELECT status FROM student_course WHERE student_id=#{studentId} AND course_id=#{courseId}")
+    String studentCourseStatus(@Param("studentId") long studentId, @Param("courseId") long courseId);
+
+    @Update("UPDATE student_course SET status='DROPPED',update_time=CURRENT_TIMESTAMP WHERE student_id=#{studentId} AND course_id=#{courseId} AND status='ACTIVE'")
+    int dropStudent(@Param("studentId") long studentId, @Param("courseId") long courseId);
+
     @Insert("""
             INSERT INTO assignment(title,description,course_id,teacher_id,deadline,status,total_score,
               require_contribution,enable_intelligent_scoring,standard_group_size,created_at,updated_at)
@@ -207,8 +246,8 @@ public interface TeachingMapper {
             FROM submission WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND is_latest=1
             FOR UPDATE
             """)
-    Optional<Map<String, Object>> lockSubmission(@Param("assignmentId") long assignmentId,
-                                                  @Param("groupId") long groupId);
+    Map<String, Object> lockSubmission(@Param("assignmentId") long assignmentId,
+                                       @Param("groupId") long groupId);
 
     @Insert("""
             INSERT INTO submission(assignment_id,group_id,submitter_id,content,file_path,submit_note,submit_time,status,

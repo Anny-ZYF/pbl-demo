@@ -8,6 +8,14 @@
       <el-icon><Tickets /></el-icon>
       <span>作业管理</span>
     </RouterLink>
+    <RouterLink v-if="route.params.courseId" class="teacher-navigation__item" :to="`/teacher/course/${route.params.courseId}/students`">
+      <el-icon><User /></el-icon>
+      <span>学生管理</span>
+    </RouterLink>
+    <RouterLink v-if="route.params.courseId" class="teacher-navigation__item" :to="`/teacher/course/${route.params.courseId}/scores`">
+      <el-icon><DataAnalysis /></el-icon>
+      <span>成绩查看</span>
+    </RouterLink>
     <button v-for="item in plannedItems" :key="item.label" class="teacher-navigation__item" type="button" @click="notifyUnavailable(item.label)">
       <el-icon><component :is="item.icon" /></el-icon>
       <span>{{ item.label }}</span>
@@ -25,8 +33,6 @@ import { DataAnalysis, Tickets, User } from '@element-plus/icons-vue'
 const route = useRoute()
 const workspacePath = computed(() => route.params.courseId ? `/teacher/course/${route.params.courseId}/workspace` : '/teacher/courses')
 const plannedItems = [
-  { label: '学生管理', icon: User },
-  { label: '成绩查看', icon: DataAnalysis }
 ]
 const notifyUnavailable = (label) => ElMessage.info(`${label}页面正在接入真实业务接口`)
 </script>

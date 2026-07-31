@@ -43,8 +43,8 @@ public class AuthService {
             account = candidates.getFirst();
         } else {
             Role requestedRole = Role.parse(request.role());
-            account = accountMapper.findByUsernameAndRole(username, requestedRole.name())
-                    .orElseThrow(this::badCredentials);
+            account = accountMapper.findByUsernameAndRole(username, requestedRole.name());
+            if (account == null) throw badCredentials();
         }
         if (account.status() != 1 || !passwordEncoder.matches(request.password(), account.passwordHash())) {
             throw badCredentials();
@@ -62,7 +62,8 @@ public class AuthService {
     @Transactional
     public TokenResponse refresh(String rawRefreshToken) {
         String hash = sha256(rawRefreshToken);
-        RefreshTokenRow stored = accountMapper.findRefreshToken(hash).orElseThrow(this::invalidRefreshToken);
+        RefreshTokenRow stored = accountMapper.findRefreshToken(hash);
+        if (stored == null) throw invalidRefreshToken();
         if (stored.revokedAt() != null || stored.expiresAt().isBefore(LocalDateTime.now()) || stored.status() != 1) {
             throw invalidRefreshToken();
         }
@@ -85,8 +86,8 @@ public class AuthService {
 
     @Transactional
     public void changePassword(UserPrincipal user, ChangePasswordRequest request) {
-        AccountRow current = accountMapper.findByUsernameAndRole(user.username(), user.role().name())
-                .orElseThrow(this::badCredentials);
+        AccountRow current = accountMapper.findByUsernameAndRole(user.username(), user.role().name());
+        if (current == null) throw badCredentials();
         if (!passwordEncoder.matches(request.currentPassword(), current.passwordHash())) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "当前密码不正确");
         }
@@ -107,8 +108,8 @@ public class AuthService {
     }
 
     public MeResponse me(UserPrincipal user) {
-        AccountRow current = accountMapper.findByUsernameAndRole(user.username(), user.role().name())
-                .orElseThrow(this::badCredentials);
+        AccountRow current = accountMapper.findByUsernameAndRole(user.username(), user.role().name());
+        if (current == null) throw badCredentials();
         return new MeResponse(current.id(), current.username(), current.displayName(), current.role(),
                 current.mustChangePassword());
     }

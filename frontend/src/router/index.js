@@ -100,6 +100,18 @@ const routes = [
         meta: { title: '批改作业' }
       },
       {
+        path: 'course/:courseId/students',
+        name: 'teacher-students',
+        component: () => import('@/views/teacher/TeacherStudentsView.vue'),
+        meta: { title: '学生管理' }
+      },
+      {
+        path: 'course/:courseId/scores',
+        name: 'teacher-scores',
+        component: () => import('@/views/teacher/TeacherScoresView.vue'),
+        meta: { title: '成绩查看' }
+      },
+      {
         path: 'dashboard',
         name: 'teacher-dashboard',
         component: () => import('@/views/teacher/TeacherDashboardView.vue'),

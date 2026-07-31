@@ -108,8 +108,8 @@ public class ScoringService {
     }
 
     public Map<String, Object> studentWorkload(UserPrincipal student, long assignmentId) {
-        Map<String, Object> summary = mapper.studentWorkload(assignmentId, student.id())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "当前没有待确认的工作量分配"));
+        Map<String, Object> summary = mapper.studentWorkload(assignmentId, student.id());
+        if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前没有待确认的工作量分配");
         long setId = ((Number) summary.get("id")).longValue();
         Map<String, Object> response = new LinkedHashMap<>(summary);
         response.put("items", mapper.workloadItems(setId));
@@ -117,8 +117,8 @@ public class ScoringService {
     }
 
     public Map<String, Object> teacherWorkload(UserPrincipal teacher, long assignmentId, long groupId) {
-        Map<String, Object> summary = mapper.teacherWorkload(assignmentId, groupId, teacher.id())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "当前团队尚无工作量分配版本"));
+        Map<String, Object> summary = mapper.teacherWorkload(assignmentId, groupId, teacher.id());
+        if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前团队尚无工作量分配版本");
         long setId = ((Number) summary.get("id")).longValue();
         Map<String, Object> response = new LinkedHashMap<>(summary);
         response.put("items", mapper.workloadItems(setId));
@@ -147,8 +147,8 @@ public class ScoringService {
 
     @Transactional
     public Map<String, Object> runScoring(UserPrincipal teacher, long submissionId) {
-        SubmissionContext context = mapper.submissionContext(submissionId, teacher.id())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "提交不存在或不属于当前教师"));
+        SubmissionContext context = mapper.submissionContext(submissionId, teacher.id());
+        if (context == null) throw new BusinessException(HttpStatus.NOT_FOUND, "提交不存在或不属于当前教师");
         require(context.groupScore() != null, HttpStatus.CONFLICT, "请先录入团队作品分");
         require(context.scoringRuleId() != null, HttpStatus.CONFLICT, "没有可用的评分规则版本");
         Long workloadSetId = mapper.lockedWorkloadSet(context.assignmentId(), context.groupId());
@@ -159,7 +159,7 @@ public class ScoringService {
         List<PaperScoringEngine.Branch> branches = buildBranches(parts, allocationRows, members);
         List<PaperScoringEngine.MemberContribution> contributions = engine.contributions(branches);
 
-        ActiveModelRow activeModel = context.standardGroupSize() == 4 ? mapper.activeModel().orElse(null) : null;
+        ActiveModelRow activeModel = context.standardGroupSize() == 4 ? mapper.activeModel() : null;
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("assignmentId", context.assignmentId());
         inputSnapshot.put("groupId", context.groupId());
@@ -230,8 +230,8 @@ public class ScoringService {
     }
 
     public Map<String, Object> runDetails(UserPrincipal teacher, long runId) {
-        Map<String, Object> run = mapper.teacherRun(runId, teacher.id())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "评分运行不存在或不属于当前教师"));
+        Map<String, Object> run = mapper.teacherRun(runId, teacher.id());
+        if (run == null) throw new BusinessException(HttpStatus.NOT_FOUND, "评分运行不存在或不属于当前教师");
         Map<String, Object> response = new LinkedHashMap<>(run);
         response.put("results", mapper.runResults(runId));
         return response;
@@ -239,7 +239,7 @@ public class ScoringService {
 
     @Transactional
     public void reviewAndApprove(UserPrincipal teacher, long runId, ScoreReviewRequest request) {
-        require(mapper.teacherRun(runId, teacher.id()).isPresent(), HttpStatus.NOT_FOUND,
+        require(mapper.teacherRun(runId, teacher.id()) != null, HttpStatus.NOT_FOUND,
                 "评分运行不存在或不属于当前教师");
         List<Map<String, Object>> existing = mapper.runResults(runId);
         require(request.decisions().size() == existing.size(), HttpStatus.BAD_REQUEST, "必须复核本次运行的全部成员成绩");
@@ -289,8 +289,8 @@ public class ScoringService {
 
     @Transactional
     public void appeal(UserPrincipal student, long resultId, AppealCreateRequest request) {
-        PublishedScoreRow score = mapper.publishedScore(resultId, student.id())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "已发布成绩不存在或不属于当前学生"));
+        PublishedScoreRow score = mapper.publishedScore(resultId, student.id());
+        if (score == null) throw new BusinessException(HttpStatus.NOT_FOUND, "已发布成绩不存在或不属于当前学生");
         require(score.publishedAt() != null && !LocalDateTime.now().isAfter(score.publishedAt().plusDays(7)),
                 HttpStatus.CONFLICT, "成绩申诉期限为发布后7天，当前已超期");
         require(mapper.openAppealCount(resultId, student.id()) == 0, HttpStatus.CONFLICT, "该成绩已有待处理申诉");

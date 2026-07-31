@@ -29,12 +29,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ") && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
                 UserPrincipal tokenUser = jwtService.parseAccessToken(header.substring(7));
-                accountMapper.findByUsernameAndRole(tokenUser.username(), tokenUser.role().name())
-                        .filter(account -> account.id() == tokenUser.id() && account.status() == 1
-                                && account.tokenVersion() == tokenUser.tokenVersion())
-                        .map(AccountRow::toPrincipal)
-                        .ifPresent(user -> SecurityContextHolder.getContext().setAuthentication(
-                                new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities())));
+                AccountRow account = accountMapper.findByUsernameAndRole(tokenUser.username(), tokenUser.role().name());
+                if (account != null && account.id() == tokenUser.id() && account.status() == 1
+                        && account.tokenVersion() == tokenUser.tokenVersion()) {
+                    UserPrincipal user = account.toPrincipal();
+                    SecurityContextHolder.getContext().setAuthentication(
+                            new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities()));
+                }
             } catch (JwtException | IllegalArgumentException ignored) {
                 SecurityContextHolder.clearContext();
             }

@@ -40,6 +40,27 @@ public class TeacherController {
         return ApiResponse.ok(service.courseStudents(teacher, courseId, assignmentId));
     }
 
+    @GetMapping("/courses/{courseId}/scores")
+    public ApiResponse<List<Map<String, Object>>> scores(@AuthenticationPrincipal UserPrincipal teacher,
+                                                         @PathVariable long courseId,
+                                                         @RequestParam long assignmentId) {
+        return ApiResponse.ok(service.teacherScores(teacher, courseId, assignmentId));
+    }
+
+    @PostMapping("/courses/{courseId}/students/import")
+    public ApiResponse<StudentCourseUpdateResult> importStudents(
+            @AuthenticationPrincipal UserPrincipal teacher, @PathVariable long courseId,
+            @Valid @RequestBody StudentImportRequest request) {
+        return ApiResponse.ok(service.importStudents(teacher, courseId, request));
+    }
+
+    @DeleteMapping("/courses/{courseId}/students/{studentId}")
+    public ApiResponse<Void> dropStudent(@AuthenticationPrincipal UserPrincipal teacher,
+                                         @PathVariable long courseId, @PathVariable long studentId) {
+        service.dropStudent(teacher, courseId, studentId);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/courses/{courseId}/assignments")
     public ResponseEntity<ApiResponse<Map<String, Object>>> createAssignment(
             @AuthenticationPrincipal UserPrincipal teacher, @PathVariable long courseId,

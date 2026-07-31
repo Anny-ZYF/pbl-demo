@@ -101,8 +101,14 @@ BEGIN
                     SET v_student_no = IF(v_group_no <= 6, (v_group_no - 1) * 4 + v_member_no, 24 + (v_group_no - 7) * 3 + v_member_no) + (v_course_no - 1) * 30;
                     SELECT id INTO v_student FROM student_users WHERE student_user_id = CONCAT('demo_student_', LPAD(v_student_no, 2, '0'));
                     INSERT INTO workload_item (workload_set_id, assignment_part_id, student_id, share, status)
-                    VALUES (v_set, v_part1, v_student, 1.0 / v_member_count, 'VERIFIED'),
-                           (v_set, v_part2, v_student, 1.0 / v_member_count, 'VERIFIED');
+                    VALUES (v_set, v_part1, v_student,
+                            IF(v_member_no = v_member_count,
+                               1.000000 - ((v_member_count - 1) * ROUND(1.0 / v_member_count, 6)),
+                               ROUND(1.0 / v_member_count, 6)), 'VERIFIED'),
+                           (v_set, v_part2, v_student,
+                            IF(v_member_no = v_member_count,
+                               1.000000 - ((v_member_count - 1) * ROUND(1.0 / v_member_count, 6)),
+                               ROUND(1.0 / v_member_count, 6)), 'VERIFIED');
                     INSERT INTO workload_confirmation (workload_set_id, student_id, status, confirmed_at)
                     VALUES (v_set, v_student, 'CONFIRMED', NOW(3));
                     SET v_member_no = v_member_no + 1;

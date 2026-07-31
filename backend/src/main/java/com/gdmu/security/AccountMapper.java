@@ -3,7 +3,6 @@ package com.gdmu.security;
 import org.apache.ibatis.annotations.*;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.List;
 
 @Mapper
@@ -26,7 +25,7 @@ public interface AccountMapper {
             WHERE username = #{username} AND role = #{role}
             LIMIT 1
             """)
-    Optional<AccountRow> findByUsernameAndRole(@Param("username") String username, @Param("role") String role);
+    AccountRow findByUsernameAndRole(@Param("username") String username, @Param("role") String role);
 
     @Select("""
             SELECT id, username, password_hash AS passwordHash, display_name AS displayName,
@@ -57,7 +56,7 @@ public interface AccountMapper {
             LIMIT 1
             FOR UPDATE
             """)
-    Optional<RefreshTokenRow> findRefreshToken(String tokenHash);
+    RefreshTokenRow findRefreshToken(String tokenHash);
 
     @Update("UPDATE refresh_token SET revoked_at = CURRENT_TIMESTAMP WHERE id = #{id} AND revoked_at IS NULL")
     int revokeRefreshToken(long id);

@@ -228,7 +228,7 @@ public interface AdminMapper {
                    metrics_json AS metricsJson
             FROM model_version WHERE id=#{id}
             """)
-    Optional<Map<String, Object>> modelForActivation(long id);
+    Map<String, Object> modelForActivation(long id);
 
     @Update("UPDATE model_version SET status='RETIRED', updated_at=CURRENT_TIMESTAMP WHERE model_key=#{modelKey} AND status='ACTIVE'")
     int retireActiveModel(String modelKey);

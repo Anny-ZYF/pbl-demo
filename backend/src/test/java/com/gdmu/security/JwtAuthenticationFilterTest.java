@@ -7,7 +7,6 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,8 +29,8 @@ class JwtAuthenticationFilterTest {
         UserPrincipal tokenUser = new UserPrincipal(5, "S5", "学生5", Role.STUDENT,
                 "", true, false, 3);
         when(jwtService.parseAccessToken("old-token")).thenReturn(tokenUser);
-        when(mapper.findByUsernameAndRole("S5", "STUDENT")).thenReturn(Optional.of(
-                new AccountRow(5, "S5", "hash", "学生5", "STUDENT", 1, false, 4)));
+        when(mapper.findByUsernameAndRole("S5", "STUDENT")).thenReturn(
+                new AccountRow(5, "S5", "hash", "学生5", "STUDENT", 1, false, 4));
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/student/courses");
         request.addHeader("Authorization", "Bearer old-token");
         AtomicBoolean authenticatedInsideChain = new AtomicBoolean(true);
@@ -54,8 +53,8 @@ class JwtAuthenticationFilterTest {
         UserPrincipal tokenUser = new UserPrincipal(5, "S5", "学生5", Role.STUDENT,
                 "", true, false, 4);
         when(jwtService.parseAccessToken("current-token")).thenReturn(tokenUser);
-        when(mapper.findByUsernameAndRole("S5", "STUDENT")).thenReturn(Optional.of(
-                new AccountRow(5, "S5", "hash", "学生5", "STUDENT", 1, false, 4)));
+        when(mapper.findByUsernameAndRole("S5", "STUDENT")).thenReturn(
+                new AccountRow(5, "S5", "hash", "学生5", "STUDENT", 1, false, 4));
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/student/courses");
         request.addHeader("Authorization", "Bearer current-token");
         AtomicBoolean authenticatedInsideChain = new AtomicBoolean(false);
