@@ -20,7 +20,7 @@ public interface TeachingMapper {
     int ownsCourse(@Param("courseId") long courseId, @Param("teacherId") long teacherId);
 
     @Select("""
-            SELECT a.id,a.title,a.description,a.deadline,a.status,a.total_score AS totalScore,
+            SELECT a.id,a.title,a.description,a.deadline,a.status,a.published_at AS publishedAt,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,a.created_at AS createdAt,
                    (SELECT COUNT(*) FROM group_table g WHERE g.assignment_id=a.id) AS groupCount,
                    (SELECT COUNT(*) FROM submission s WHERE s.assignment_id=a.id) AS submissionCount
@@ -92,9 +92,9 @@ public interface TeachingMapper {
     int dropStudent(@Param("studentId") long studentId, @Param("courseId") long courseId);
 
     @Insert("""
-            INSERT INTO assignment(title,description,course_id,teacher_id,deadline,status,total_score,
+            INSERT INTO assignment(title,description,course_id,teacher_id,deadline,status,published_at,total_score,
               require_contribution,enable_intelligent_scoring,standard_group_size,created_at,updated_at)
-            VALUES(#{r.title},#{r.description},#{courseId},#{teacherId},#{r.deadline},'DRAFT',#{r.totalScore},
+            VALUES(#{r.title},#{r.description},#{courseId},#{teacherId},#{r.deadline},'PUBLISHED',CURRENT_TIMESTAMP,#{r.totalScore},
               1,1,#{r.standardGroupSize},CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
             """)
     int insertAssignment(@Param("courseId") long courseId, @Param("teacherId") long teacherId,
@@ -210,6 +210,7 @@ public interface TeachingMapper {
     @Select("""
             SELECT a.id,a.title,a.description,a.deadline,a.status,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,
+                   (a.published_at IS NOT NULL AND CURRENT_TIMESTAMP < DATE_ADD(a.published_at, INTERVAL 2 DAY)) AS teamFormation,
                    EXISTS(SELECT 1 FROM submission s JOIN group_member gm ON gm.group_id=s.group_id
                           WHERE s.assignment_id=a.id AND s.is_latest=1
                             AND gm.student_id=#{studentId} AND gm.status='ACTIVE') AS submitted
@@ -220,12 +221,60 @@ public interface TeachingMapper {
     List<Map<String, Object>> studentAssignments(@Param("courseId") long courseId, @Param("studentId") long studentId);
 
     @Select("""
+            SELECT a.id,a.title,a.description,a.deadline,a.published_at AS publishedAt,a.total_score AS totalScore,
+                   g.id AS groupId,g.name AS groupName,
+                   sub.content,sub.file_path AS filePath,sub.submit_note AS submitNote,
+                   sub.status AS submissionStatus,sub.teacher_score AS teacherScore,
+                   sub.teacher_comment AS teacherComment,sub.is_score_published AS scorePublished
+            FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id
+            LEFT JOIN group_member gm ON gm.student_id=sc.student_id AND gm.assignment_id=a.id AND gm.status='ACTIVE'
+            LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=a.id
+            LEFT JOIN submission sub ON sub.assignment_id=a.id AND sub.group_id=g.id AND sub.is_latest=1
+            WHERE a.id=#{assignmentId} AND sc.student_id=#{studentId} AND sc.status='ACTIVE'
+              AND a.status IN ('PUBLISHED','CLOSED')
+            LIMIT 1
+            """)
+    Map<String, Object> studentAssignmentDetail(@Param("assignmentId") long assignmentId,
+                                                @Param("studentId") long studentId);
+
+    @Select("""
             SELECT g.id,g.name,g.assignment_id AS assignmentId,g.team_status AS teamStatus,
                    g.leader_student_id AS leaderStudentId
             FROM group_member gm JOIN group_table g ON g.id=gm.group_id
             WHERE gm.student_id=#{studentId} AND gm.status='ACTIVE' ORDER BY g.id DESC
             """)
     List<Map<String, Object>> studentGroups(long studentId);
+
+    @Select("SELECT g.id,g.name,CAST(SUBSTRING(g.name,2,LENGTH(g.name)-3) AS UNSIGNED) AS groupNo,g.max_members AS maxMembers,COUNT(gm.id) AS memberCount FROM group_table g LEFT JOIN group_member gm ON gm.group_id=g.id AND gm.status='ACTIVE' WHERE g.assignment_id=#{assignmentId} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED') GROUP BY g.id ORDER BY g.id")
+    List<Map<String,Object>> studentAssignmentGroups(long assignmentId);
+
+    @Delete("DELETE FROM group_member WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
+    int leaveStudentGroup(@Param("groupId") long groupId,@Param("studentId") long studentId);
+
+    @Update("UPDATE group_table SET team_status='DISSOLVED',update_time=CURRENT_TIMESTAMP WHERE id=#{groupId} AND NOT EXISTS (SELECT 1 FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE')")
+    int dissolveEmptyGroup(long groupId);
+
+    @Select("SELECT standard_group_size FROM assignment WHERE id=#{assignmentId} AND status IN ('PUBLISHED','CLOSED')")
+    Integer studentAssignmentGroupSize(long assignmentId);
+
+    @Select("SELECT COUNT(*) + 1 FROM group_table WHERE assignment_id=#{assignmentId} AND team_status NOT IN ('DISSOLVED','ARCHIVED')")
+    int nextGroupNo(long assignmentId);
+
+    @Insert("INSERT INTO group_table(name,course_id,assignment_id,leader_student_id,status,team_status,max_members,join_method,create_time,update_time) VALUES(#{name},#{courseId},#{assignmentId},#{studentId},1,'FORMING',#{maxMembers},'FREE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+    int insertStudentGroup(@Param("name") String name,@Param("courseId") long courseId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId,@Param("maxMembers") int maxMembers);
+
+    @Select("SELECT LAST_INSERT_ID()") long lastGroupId();
+
+    @Insert("INSERT INTO group_member(group_id,assignment_id,student_id,role,status,joined_at) VALUES(#{groupId},#{assignmentId},#{studentId},'LEADER','ACTIVE',CURRENT_TIMESTAMP)")
+    int insertStudentLeader(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+
+    @Select("SELECT g.id,g.course_id AS courseId,g.max_members AS maxMembers FROM group_table g WHERE g.assignment_id=#{assignmentId} AND g.name=#{name} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')")
+    Map<String,Object> findStudentGroup(@Param("assignmentId") long assignmentId,@Param("name") String name);
+
+    @Select("SELECT COUNT(*) FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE'") int activeGroupMemberCount(long groupId);
+
+    @Insert("INSERT INTO group_member(group_id,assignment_id,student_id,role,status,joined_at) VALUES(#{groupId},#{assignmentId},#{studentId},'MEMBER','ACTIVE',CURRENT_TIMESTAMP)")
+    int joinStudentGroup(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
 
     @Select("""
             SELECT COUNT(*) FROM group_member gm JOIN group_table g ON g.id=gm.group_id
@@ -240,6 +289,9 @@ public interface TeachingMapper {
             LIMIT 1
             """)
     Long studentGroup(@Param("assignmentId") long assignmentId, @Param("studentId") long studentId);
+
+    @Select("SELECT a.course_id FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id AND sc.student_id=#{studentId} AND sc.status='ACTIVE' WHERE a.id=#{assignmentId} AND a.status IN ('PUBLISHED','CLOSED')")
+    Long assignmentCourseForStudent(@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
 
     @Select("""
             SELECT status,is_score_published AS isScorePublished
@@ -264,4 +316,7 @@ public interface TeachingMapper {
 
     @Select("SELECT deadline FROM assignment WHERE id=#{assignmentId} AND status='PUBLISHED'")
     LocalDateTime assignmentDeadline(long assignmentId);
+
+    @Select("SELECT published_at FROM assignment WHERE id=#{assignmentId} AND status IN ('PUBLISHED','CLOSED')")
+    LocalDateTime assignmentPublishedAt(long assignmentId);
 }

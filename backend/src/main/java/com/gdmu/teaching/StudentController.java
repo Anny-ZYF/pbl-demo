@@ -31,9 +31,35 @@ public class StudentController {
         return ApiResponse.ok(service.studentAssignments(student, courseId));
     }
 
+    @GetMapping("/assignments/{assignmentId}")
+    public ApiResponse<Map<String, Object>> assignment(@AuthenticationPrincipal UserPrincipal student,
+                                                       @PathVariable long assignmentId) {
+        return ApiResponse.ok(service.studentAssignmentDetail(student, assignmentId));
+    }
+
     @GetMapping("/groups")
     public ApiResponse<List<Map<String, Object>>> groups(@AuthenticationPrincipal UserPrincipal student) {
         return ApiResponse.ok(service.studentGroups(student));
+    }
+
+    @PostMapping("/assignments/{assignmentId}/groups")
+    public ApiResponse<Map<String,Object>> createGroup(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId) {
+        return ApiResponse.created(service.createStudentGroup(student, assignmentId));
+    }
+
+    @PostMapping("/assignments/{assignmentId}/groups/join")
+    public ApiResponse<Void> joinGroup(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId, @Valid @RequestBody StudentGroupJoinRequest request) {
+        service.joinStudentGroup(student, assignmentId, request.groupNo()); return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/assignments/{assignmentId}/groups")
+    public ApiResponse<List<Map<String,Object>>> assignmentGroups(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId) {
+        return ApiResponse.ok(service.studentAssignmentGroups(student, assignmentId));
+    }
+
+    @DeleteMapping("/assignments/{assignmentId}/groups/me")
+    public ApiResponse<Void> leaveGroup(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId) {
+        service.leaveStudentGroup(student, assignmentId); return ApiResponse.ok(null);
     }
 
     @GetMapping("/groups/{groupId}/members")

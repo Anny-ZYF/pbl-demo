@@ -129,9 +129,26 @@ const routes = [
       {
         path: 'dashboard',
         name: 'student-dashboard',
-        component: () => import('@/views/role/RoleHomeView.vue'),
-        props: { role: 'ROLE_STUDENT' },
+        component: () => import('@/views/student/StudentCourseCenterView.vue'),
         meta: { title: '学生工作台' }
+      },
+      {
+        path: 'course/:courseId',
+        name: 'student-course',
+        component: () => import('@/views/student/StudentCourseView.vue'),
+        meta: { title: '学生课程' }
+      },
+      {
+        path: 'assignment/:assignmentId',
+        name: 'student-assignment-detail',
+        component: () => import('@/views/student/StudentAssignmentDetailView.vue'),
+        meta: { title: '作业详情' }
+      },
+      {
+        path: 'scores',
+        name: 'student-scores',
+        component: () => import('@/views/student/StudentScoresView.vue'),
+        meta: { title: '我的成绩' }
       }
     ]
   },

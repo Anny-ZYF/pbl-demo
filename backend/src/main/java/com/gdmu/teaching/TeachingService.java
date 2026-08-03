@@ -92,7 +92,8 @@ public class TeachingService {
         }
         auditService.record(teacher, "ASSIGNMENT_CREATED", "ASSIGNMENT", assignmentId,
                 Map.of("courseId", courseId, "standardGroupSize", request.standardGroupSize(), "branchCount", request.branches().size()));
-        return Map.of("id", assignmentId, "status", "DRAFT");
+        auditService.record(teacher, "ASSIGNMENT_PUBLISHED", "ASSIGNMENT", assignmentId, Map.of("courseId", courseId));
+        return Map.of("id", assignmentId, "status", "PUBLISHED");
     }
 
     @Transactional
@@ -154,8 +155,54 @@ public class TeachingService {
         return mapper.studentAssignments(courseId, student.id());
     }
 
+    public Map<String, Object> studentAssignmentDetail(UserPrincipal student, long assignmentId) {
+        Map<String, Object> detail = mapper.studentAssignmentDetail(assignmentId, student.id());
+        require(detail != null, HttpStatus.NOT_FOUND, "作业不存在或当前学生无权查看");
+        Object groupId = detail.get("groupId");
+        detail.put("members", groupId == null ? List.of() : mapper.groupMembers(((Number) groupId).longValue()));
+        return detail;
+    }
+
     public List<Map<String, Object>> studentGroups(UserPrincipal student) {
         return mapper.studentGroups(student.id());
+    }
+
+    public List<Map<String,Object>> studentAssignmentGroups(UserPrincipal student, long assignmentId) {
+        require(mapper.assignmentCourseForStudent(assignmentId, student.id()) != null, HttpStatus.NOT_FOUND, "作业不存在或未选修该课程");
+        return mapper.studentAssignmentGroups(assignmentId);
+    }
+
+    @Transactional
+    public void leaveStudentGroup(UserPrincipal student, long assignmentId) {
+        LocalDateTime publishedAt = mapper.assignmentPublishedAt(assignmentId);
+        require(publishedAt != null && LocalDateTime.now().isBefore(publishedAt.plusDays(2)), HttpStatus.CONFLICT, "组队期已结束，小组已经锁定");
+        Long groupId = mapper.studentGroup(assignmentId, student.id());
+        require(groupId != null, HttpStatus.CONFLICT, "当前没有加入小组");
+        require(mapper.leaveStudentGroup(groupId, student.id()) == 1, HttpStatus.CONFLICT, "退出小组失败");
+        mapper.dissolveEmptyGroup(groupId);
+    }
+
+    @Transactional
+    public Map<String,Object> createStudentGroup(UserPrincipal student, long assignmentId) {
+        Long courseId = mapper.assignmentCourseForStudent(assignmentId, student.id());
+        Integer standard = mapper.studentAssignmentGroupSize(assignmentId);
+        require(courseId != null && standard != null, HttpStatus.NOT_FOUND, "作业不存在或未发布");
+        int no = mapper.nextGroupNo(assignmentId);
+        int max = standard + 1;
+        mapper.insertStudentGroup("第" + no + "组", courseId, assignmentId, student.id(), max);
+        long groupId = mapper.lastGroupId(); mapper.insertStudentLeader(groupId, assignmentId, student.id());
+        return Map.of("id", groupId, "name", "第" + no + "组", "maxMembers", max);
+    }
+
+    @Transactional
+    public void joinStudentGroup(UserPrincipal student, long assignmentId, int groupNo) {
+        Long courseId = mapper.assignmentCourseForStudent(assignmentId, student.id());
+        require(courseId != null, HttpStatus.NOT_FOUND, "作业不存在或未选修该课程");
+        Map<String,Object> group = mapper.findStudentGroup(assignmentId, "第" + groupNo + "组");
+        require(group != null, HttpStatus.NOT_FOUND, "小组不存在");
+        require(mapper.studentGroup(assignmentId, student.id()) == null, HttpStatus.CONFLICT, "你已经加入该作业的小组");
+        require(mapper.activeGroupMemberCount(((Number) group.get("id")).longValue()) < ((Number) group.get("maxMembers")).intValue(), HttpStatus.CONFLICT, "小组人数已满");
+        mapper.joinStudentGroup(((Number) group.get("id")).longValue(), assignmentId, student.id());
     }
 
     public List<Map<String, Object>> studentGroupMembers(UserPrincipal student, long groupId) {
@@ -169,6 +216,8 @@ public class TeachingService {
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.FORBIDDEN, "当前学生不属于该作业的有效团队");
         LocalDateTime deadline = mapper.assignmentDeadline(assignmentId);
+        LocalDateTime publishedAt = mapper.assignmentPublishedAt(assignmentId);
+        require(publishedAt != null && !LocalDateTime.now().isBefore(publishedAt.plusDays(2)), HttpStatus.CONFLICT, "当前处于组队期，暂不可提交作业");
         require(deadline != null, HttpStatus.CONFLICT, "作业未发布");
         require(!LocalDateTime.now().isAfter(deadline), HttpStatus.CONFLICT, "作业已截止");
         require((request.content() != null && !request.content().isBlank())
