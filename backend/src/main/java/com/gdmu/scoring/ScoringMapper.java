@@ -18,6 +18,16 @@ public interface ScoringMapper {
     int gradeSubmission(@Param("submissionId") long submissionId, @Param("teacherId") long teacherId,
                         @Param("score") double score, @Param("comment") String comment);
 
+    @Insert("""
+            INSERT INTO individual_score(submission_id,student_id,teacher_score,contribution_ratio,individual_final_score,calculated_by,is_published,publish_time)
+            SELECT s.id,gm.student_id,s.teacher_score,100.0000,s.teacher_score,#{teacherId},1,CURRENT_TIMESTAMP
+            FROM submission s JOIN group_member gm ON gm.group_id=s.group_id AND gm.assignment_id=s.assignment_id AND gm.status='ACTIVE'
+            WHERE s.id=#{submissionId}
+            ON DUPLICATE KEY UPDATE teacher_score=VALUES(teacher_score),individual_final_score=VALUES(individual_final_score),
+              calculated_by=VALUES(calculated_by),is_published=1,publish_time=CURRENT_TIMESTAMP
+            """)
+    int fallbackIndividualScores(@Param("submissionId") long submissionId, @Param("teacherId") long teacherId);
+
     @Select("""
             SELECT s.id AS submissionId,a.id AS assignmentId,s.group_id AS groupId,a.teacher_id AS teacherId,
                    a.standard_group_size AS standardGroupSize,
@@ -304,14 +314,14 @@ public interface ScoringMapper {
 
     @Update("""
             UPDATE score_result SET status='PUBLISHED',published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-            WHERE scoring_run_id=#{runId} AND status='REVIEWED'
+            WHERE scoring_run_id=#{runId} AND status IN ('DRAFT','REVIEWED')
             """)
     int publishResults(long runId);
 
     @Update("""
             UPDATE scoring_run sr JOIN assignment a ON a.id=sr.assignment_id
             SET sr.status='PUBLISHED',sr.updated_at=CURRENT_TIMESTAMP
-            WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId} AND sr.status='APPROVED'
+            WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId} AND sr.status IN ('MODEL_COMPLETE','DEGRADED','APPROVED')
             """)
     int publishRun(@Param("runId") long runId, @Param("teacherId") long teacherId);
 

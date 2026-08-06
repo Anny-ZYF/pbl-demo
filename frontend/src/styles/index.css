@@ -737,3 +737,4 @@ code {
     animation-iteration-count: 1 !important;
   }
 }
+ .page .team{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:8px!important;width:75%!important}.page .team strong,.page .team span,.page .team label{display:flex!important;align-items:center;justify-content:space-between;width:100%;box-sizing:border-box}.page .team label{gap:18px!important}.page .team label span{width:50%!important}.page .team label input{width:50%!important;box-sizing:border-box;border:1px solid #dbe3ea;border-radius:8px!important;padding:9px 12px!important}.page .team em{display:none!important}

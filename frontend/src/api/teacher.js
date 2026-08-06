@@ -12,3 +12,4 @@ export const getGroups = (assignmentId) => http.get(`/teacher/assignments/${assi
 export const getSubmissions = (assignmentId) => http.get(`/teacher/assignments/${assignmentId}/submissions`)
 export const runScoring = (submissionId) => http.post(`/teacher/submissions/${submissionId}/scoring-runs`)
 export const gradeSubmission = (submissionId, data) => http.put(`/teacher/submissions/${submissionId}/grade`, data)
+export const publishScoringRun = (runId) => http.post(`/teacher/scoring-runs/${runId}/publish`)

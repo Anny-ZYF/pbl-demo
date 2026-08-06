@@ -50,6 +50,13 @@ public class ScoringService {
                 HttpStatus.CONFLICT, "提交不存在、不属于当前教师或成绩已经发布");
         auditService.record(teacher, "GROUP_SCORE_RECORDED", "SUBMISSION", submissionId,
                 Map.of("groupScore", request.groupScore()));
+        try {
+            runScoring(teacher, submissionId);
+        } catch (BusinessException scoringError) {
+            mapper.fallbackIndividualScores(submissionId, teacher.id());
+            auditService.record(teacher, "SCORING_FALLBACK_TEACHER_SCORE", "SUBMISSION", submissionId,
+                    Map.of("reason", scoringError.getMessage()));
+        }
     }
 
     @Transactional
@@ -274,9 +281,9 @@ public class ScoringService {
     @Transactional
     public void publish(UserPrincipal teacher, long runId) {
         require(mapper.publishRun(runId, teacher.id()) == 1, HttpStatus.CONFLICT,
-                "评分运行不存在、不属于当前教师或尚未批准");
+                "评分运行不存在、不属于当前教师或尚未完成计算");
         int published = mapper.publishResults(runId);
-        require(published > 0, HttpStatus.CONFLICT, "没有可发布的复核成绩");
+        require(published > 0, HttpStatus.CONFLICT, "没有可发布的成绩");
         mapper.markSubmissionPublished(runId);
         mapper.projectIndividualScores(runId);
         mapper.projectFinalScores(runId);

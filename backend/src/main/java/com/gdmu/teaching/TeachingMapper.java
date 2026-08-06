@@ -54,17 +54,22 @@ public interface TeachingMapper {
 
     @Select("""
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
-                   g.name AS groupName,fs.score AS finalScore,
+                   g.name AS groupName,sr.id AS scoringRunId,COALESCE(r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
                    r.status AS scoringStatus,COALESCE(i.is_published, 0) AS scorePublished,
-                   i.contribution_ratio AS contributionRatio,i.teacher_score AS groupScore,
-                   i.individual_final_score AS individualFinalScore
+                   COALESCE(r.contribution, i.contribution_ratio / 100) AS contributionRatio,
+                   COALESCE(r.group_score, i.teacher_score) AS groupScore,
+                   COALESCE(r.final_score, i.individual_final_score) AS individualFinalScore
             FROM student_course sc JOIN student_users s ON s.id=sc.student_id
             LEFT JOIN group_member gm ON gm.student_id=s.id AND gm.status='ACTIVE'
               AND gm.group_id IN (SELECT id FROM group_table WHERE assignment_id=#{assignmentId})
             LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=#{assignmentId}
             LEFT JOIN final_score fs ON fs.student_id=s.id AND fs.assignment_id=#{assignmentId}
-            LEFT JOIN scoring_run sr ON sr.id=(SELECT sr2.id FROM scoring_run sr2 WHERE sr2.assignment_id=#{assignmentId} ORDER BY sr2.id DESC LIMIT 1)
+            LEFT JOIN scoring_run sr ON sr.id=(
+              SELECT sr2.id FROM scoring_run sr2
+              JOIN score_result r2 ON r2.scoring_run_id=sr2.id AND r2.student_id=s.id
+              WHERE sr2.assignment_id=#{assignmentId}
+              ORDER BY sr2.id DESC LIMIT 1)
             LEFT JOIN score_result r ON r.student_id=s.id AND r.scoring_run_id=sr.id
             LEFT JOIN individual_score i ON i.student_id=s.id AND i.submission_id=(
               SELECT sub.id FROM submission sub WHERE sub.assignment_id=#{assignmentId}
@@ -236,6 +241,21 @@ public interface TeachingMapper {
             """)
     Map<String, Object> studentAssignmentDetail(@Param("assignmentId") long assignmentId,
                                                 @Param("studentId") long studentId);
+
+    @Select("SELECT id,part_name AS name,part_description AS description,weight FROM assignment_parts WHERE assignment_id=#{assignmentId} ORDER BY sort_order,id")
+    List<Map<String,Object>> studentAssignmentParts(long assignmentId);
+
+    @Select("SELECT sa.id,sa.storage_key AS storageKey,sa.original_name AS originalName,sa.file_size AS fileSize,sa.created_at AS createdAt FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id JOIN group_member gm ON gm.group_id=s.group_id AND gm.student_id=#{studentId} AND gm.status='ACTIVE' WHERE s.assignment_id=#{assignmentId} AND s.is_latest=1 ORDER BY sa.id")
+    List<Map<String,Object>> studentSubmissionAttachments(@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+
+    @Delete("DELETE sa FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id JOIN group_member gm ON gm.group_id=s.group_id AND gm.student_id=#{studentId} AND gm.status='ACTIVE' WHERE sa.id=#{attachmentId} AND s.assignment_id=#{assignmentId} AND s.is_latest=1")
+    int deleteStudentAttachment(@Param("attachmentId") long attachmentId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+
+    @Select("SELECT id FROM submission WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND is_latest=1")
+    Long latestSubmissionId(@Param("assignmentId") long assignmentId,@Param("groupId") long groupId);
+
+    @Insert("INSERT IGNORE INTO submission_attachment(submission_id,storage_key,original_name,file_size) VALUES(#{submissionId},#{storageKey},#{originalName},#{fileSize})")
+    int insertAttachment(@Param("submissionId") long submissionId,@Param("storageKey") String storageKey,@Param("originalName") String originalName,@Param("fileSize") long fileSize);
 
     @Select("""
             SELECT g.id,g.name,g.assignment_id AS assignmentId,g.team_status AS teamStatus,

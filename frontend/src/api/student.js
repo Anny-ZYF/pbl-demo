@@ -8,3 +8,5 @@ export const createStudentGroup = (assignmentId) => http.post(`/student/assignme
 export const joinStudentGroup = (assignmentId, groupNo) => http.post(`/student/assignments/${assignmentId}/groups/join`, { groupNo })
 export const getAssignmentGroups = (assignmentId) => http.get(`/student/assignments/${assignmentId}/groups`)
 export const leaveStudentGroup = (assignmentId) => http.delete(`/student/assignments/${assignmentId}/groups/me`)
+export const deleteSubmissionAttachment = (assignmentId, attachmentId) => http.delete(`/student/assignments/${assignmentId}/attachments/${attachmentId}`)
+export const uploadStudentFile = (file) => { const data = new FormData(); data.append('file', file); return http.post('/files', data, { headers: { 'Content-Type': 'multipart/form-data' } }) }

@@ -37,6 +37,11 @@ public class StudentController {
         return ApiResponse.ok(service.studentAssignmentDetail(student, assignmentId));
     }
 
+    @DeleteMapping("/assignments/{assignmentId}/attachments/{attachmentId}")
+    public ApiResponse<Void> deleteAttachment(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId, @PathVariable long attachmentId) {
+        service.deleteStudentAttachment(student, assignmentId, attachmentId); return ApiResponse.ok(null);
+    }
+
     @GetMapping("/groups")
     public ApiResponse<List<Map<String, Object>>> groups(@AuthenticationPrincipal UserPrincipal student) {
         return ApiResponse.ok(service.studentGroups(student));

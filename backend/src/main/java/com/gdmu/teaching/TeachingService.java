@@ -160,7 +160,14 @@ public class TeachingService {
         require(detail != null, HttpStatus.NOT_FOUND, "作业不存在或当前学生无权查看");
         Object groupId = detail.get("groupId");
         detail.put("members", groupId == null ? List.of() : mapper.groupMembers(((Number) groupId).longValue()));
+        detail.put("parts", mapper.studentAssignmentParts(assignmentId));
+        detail.put("attachments", mapper.studentSubmissionAttachments(assignmentId, student.id()));
         return detail;
+    }
+
+    @Transactional
+    public void deleteStudentAttachment(UserPrincipal student, long assignmentId, long attachmentId) {
+        require(mapper.deleteStudentAttachment(attachmentId, assignmentId, student.id()) == 1, HttpStatus.NOT_FOUND, "附件不存在或无权删除");
     }
 
     public List<Map<String, Object>> studentGroups(UserPrincipal student) {
@@ -221,7 +228,8 @@ public class TeachingService {
         require(deadline != null, HttpStatus.CONFLICT, "作业未发布");
         require(!LocalDateTime.now().isAfter(deadline), HttpStatus.CONFLICT, "作业已截止");
         require((request.content() != null && !request.content().isBlank())
-                        || (request.filePath() != null && !request.filePath().isBlank()),
+                        || (request.filePath() != null && !request.filePath().isBlank())
+                        || (request.attachments() != null && !request.attachments().isEmpty()),
                 HttpStatus.BAD_REQUEST, "正文和附件至少提交一项");
         if (request.filePath() != null && !request.filePath().isBlank()) {
             String normalized = request.filePath().replace('\\', '/');
@@ -239,6 +247,16 @@ public class TeachingService {
                     HttpStatus.CONFLICT, "作品已评分或成绩已发布，不能覆盖提交");
         }
         mapper.upsertSubmission(assignmentId, groupId, student.id(), request);
+        Long submissionId = mapper.latestSubmissionId(assignmentId, groupId);
+        if (submissionId != null && request.attachments() != null) {
+            for (String key : request.attachments()) {
+                if (key == null || key.isBlank()) continue;
+                String normalized = key.replace('\\', '/');
+                require(normalized.matches("\\d{4}/\\d{2}/student/" + student.id() + "/[0-9a-fA-F-]{36}\\.[A-Za-z0-9]{1,8}"), HttpStatus.BAD_REQUEST, "附件路径不合法");
+                String name = normalized.substring(normalized.lastIndexOf('/') + 1);
+                mapper.insertAttachment(submissionId, normalized, name, 0);
+            }
+        }
         auditService.record(student, "SUBMISSION_SAVED", "ASSIGNMENT", assignmentId, Map.of("groupId", groupId));
     }
 
