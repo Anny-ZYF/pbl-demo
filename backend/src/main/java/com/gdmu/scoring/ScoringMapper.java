@@ -313,22 +313,33 @@ public interface ScoringMapper {
     int approveRun(@Param("runId") long runId, @Param("teacherId") long teacherId);
 
     @Update("""
-            UPDATE score_result SET status='PUBLISHED',published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-            WHERE scoring_run_id=#{runId} AND status IN ('DRAFT','REVIEWED')
+            UPDATE score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id
+              JOIN scoring_run source ON source.assignment_id=sr.assignment_id AND source.id=#{runId}
+            SET r.status='PUBLISHED',r.published_at=CURRENT_TIMESTAMP,r.updated_at=CURRENT_TIMESTAMP
+            WHERE r.status IN ('DRAFT','REVIEWED','PENDING_REVIEW','APPROVED','PUBLISHED')
             """)
     int publishResults(long runId);
 
     @Update("""
-            UPDATE scoring_run sr JOIN assignment a ON a.id=sr.assignment_id
-            SET sr.status='PUBLISHED',sr.updated_at=CURRENT_TIMESTAMP
-            WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId} AND sr.status IN ('MODEL_COMPLETE','DEGRADED','APPROVED')
+            UPDATE scoring_run target JOIN scoring_run source ON source.assignment_id=target.assignment_id AND source.id=#{runId}
+            JOIN assignment a ON a.id=target.assignment_id
+            SET target.status='PUBLISHED',target.updated_at=CURRENT_TIMESTAMP
+            WHERE a.teacher_id=#{teacherId}
+              AND target.status IN ('MODEL_COMPLETE','DEGRADED','APPROVED','PUBLISHED')
             """)
     int publishRun(@Param("runId") long runId, @Param("teacherId") long teacherId);
 
+    @Select("""
+            SELECT COUNT(*) FROM scoring_run sr
+            JOIN assignment a ON a.id=sr.assignment_id
+            WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId} AND sr.status='PUBLISHED'
+            """)
+    int publishedRunOwned(@Param("runId") long runId, @Param("teacherId") long teacherId);
+
     @Update("""
             UPDATE submission s JOIN scoring_run sr ON sr.submission_id=s.id
+              JOIN scoring_run source ON source.assignment_id=sr.assignment_id AND source.id=#{runId}
             SET s.is_score_published=1,s.score_publish_time=CURRENT_TIMESTAMP,s.updated_at=CURRENT_TIMESTAMP
-            WHERE sr.id=#{runId}
             """)
     int markSubmissionPublished(long runId);
 
@@ -338,7 +349,8 @@ public interface ScoringMapper {
             SELECT sr.submission_id,r.student_id,r.id,r.group_score,r.contribution*100,r.final_score,
                    sr.triggered_by_teacher_id,1,CURRENT_TIMESTAMP
             FROM score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id
-            WHERE sr.id=#{runId} AND r.status='PUBLISHED'
+            JOIN scoring_run source ON source.assignment_id=sr.assignment_id AND source.id=#{runId}
+            WHERE r.status='PUBLISHED'
             ON DUPLICATE KEY UPDATE score_result_id=VALUES(score_result_id),teacher_score=VALUES(teacher_score),
               contribution_ratio=VALUES(contribution_ratio),individual_final_score=VALUES(individual_final_score),
               calculated_by=VALUES(calculated_by),is_published=1,publish_time=CURRENT_TIMESTAMP
@@ -352,7 +364,8 @@ public interface ScoringMapper {
                    CURRENT_TIMESTAMP,sr.triggered_by_teacher_id,r.review_reason,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
             FROM score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id
             JOIN assignment a ON a.id=sr.assignment_id
-            WHERE sr.id=#{runId} AND r.status='PUBLISHED'
+            JOIN scoring_run source ON source.assignment_id=sr.assignment_id AND source.id=#{runId}
+            WHERE r.status='PUBLISHED'
             ON DUPLICATE KEY UPDATE score_result_id=VALUES(score_result_id),course_id=VALUES(course_id),
               score=VALUES(score),graded_time=CURRENT_TIMESTAMP,graded_by=VALUES(graded_by),comment=VALUES(comment),
               update_time=CURRENT_TIMESTAMP

@@ -56,7 +56,8 @@ public interface TeachingMapper {
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
                    g.name AS groupName,sr.id AS scoringRunId,COALESCE(r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
-                   r.status AS scoringStatus,COALESCE(i.is_published, 0) AS scorePublished,
+                   r.status AS scoringStatus,
+                   CASE WHEN sr.status='PUBLISHED' THEN 1 ELSE COALESCE(i.is_published, 0) END AS scorePublished,
                    COALESCE(r.contribution, i.contribution_ratio / 100) AS contributionRatio,
                    COALESCE(r.group_score, i.teacher_score) AS groupScore,
                    COALESCE(r.final_score, i.individual_final_score) AS individualFinalScore
@@ -149,6 +150,27 @@ public interface TeachingMapper {
             """)
     List<Map<String, Object>> groupMembers(long groupId);
 
+    @Select("""
+            SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,gm.role,gm.status,
+                   c.name AS className,gm.joined_at AS joinedAt,
+                   COALESCE((SELECT i.contribution_ratio FROM individual_score i
+                             JOIN submission sub ON sub.id=i.submission_id
+                             WHERE i.student_id=s.id AND sub.assignment_id=#{assignmentId}
+                               AND sub.group_id=gm.group_id AND sub.is_latest=1
+                             ORDER BY i.id DESC LIMIT 1),
+                            (SELECT SUM(wi.share * ap.weight) * 100 FROM workload_item wi
+                             JOIN workload_set ws ON ws.id=wi.workload_set_id
+                             JOIN assignment_parts ap ON ap.id=wi.assignment_part_id
+                             WHERE ws.assignment_id=#{assignmentId} AND ws.group_id=gm.group_id
+                               AND ws.status='LOCKED' AND wi.student_id=s.id)) AS contributionRatio
+            FROM group_member gm JOIN student_users s ON s.id=gm.student_id
+            LEFT JOIN `class` c ON c.id=s.class_id
+            WHERE gm.group_id=#{groupId} AND gm.status='ACTIVE'
+            ORDER BY CASE gm.role WHEN 'LEADER' THEN 0 ELSE 1 END,s.student_user_id
+            """)
+    List<Map<String, Object>> studentGroupMembers(@Param("groupId") long groupId,
+                                                  @Param("assignmentId") long assignmentId);
+
     @Select("SELECT COUNT(*) FROM assignment WHERE id=#{assignmentId} AND teacher_id=#{teacherId}")
     int ownsAssignment(@Param("assignmentId") long assignmentId, @Param("teacherId") long teacherId);
 
@@ -216,6 +238,7 @@ public interface TeachingMapper {
             SELECT a.id,a.title,a.description,a.deadline,a.status,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,
                    (a.published_at IS NOT NULL AND CURRENT_TIMESTAMP < DATE_ADD(a.published_at, INTERVAL 2 DAY)) AS teamFormation,
+                   EXISTS(SELECT 1 FROM scoring_run sr WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED') AS scorePublished,
                    EXISTS(SELECT 1 FROM submission s JOIN group_member gm ON gm.group_id=s.group_id
                           WHERE s.assignment_id=a.id AND s.is_latest=1
                             AND gm.student_id=#{studentId} AND gm.status='ACTIVE') AS submitted
@@ -230,7 +253,8 @@ public interface TeachingMapper {
                    g.id AS groupId,g.name AS groupName,
                    sub.content,sub.file_path AS filePath,sub.submit_note AS submitNote,
                    sub.status AS submissionStatus,sub.teacher_score AS teacherScore,
-                   sub.teacher_comment AS teacherComment,sub.is_score_published AS scorePublished
+                   sub.teacher_comment AS teacherComment,
+                   (sub.is_score_published=1 OR EXISTS(SELECT 1 FROM scoring_run sr WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED')) AS scorePublished
             FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id
             LEFT JOIN group_member gm ON gm.student_id=sc.student_id AND gm.assignment_id=a.id AND gm.status='ACTIVE'
             LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=a.id
@@ -309,6 +333,21 @@ public interface TeachingMapper {
             LIMIT 1
             """)
     Long studentGroup(@Param("assignmentId") long assignmentId, @Param("studentId") long studentId);
+
+    @Select("SELECT id FROM assignment_parts WHERE assignment_id=#{assignmentId} ORDER BY sort_order,id")
+    List<Long> assignmentPartIds(long assignmentId);
+    @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status='ACTIVE' ORDER BY student_id")
+    List<Long> activeGroupStudentIds(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
+    @Select("SELECT COALESCE(MAX(version_no),0)+1 FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId}")
+    int nextSubmissionWorkloadVersion(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
+    @Update("UPDATE workload_set SET status='SUPERSEDED',updated_at=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status IN ('DRAFT','PENDING_CONFIRMATION')")
+    int supersedeSubmissionWorkloads(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
+    @Insert("INSERT INTO workload_set(group_id,assignment_id,version_no,status,created_by_student_id,submitted_at,locked_at,created_at,updated_at) VALUES(#{groupId},#{assignmentId},#{version},'LOCKED',#{studentId},CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+    int insertSubmissionWorkloadSet(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId, @Param("version") int version, @Param("studentId") long studentId);
+    @Select("SELECT id FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND version_no=#{version}")
+    long submissionWorkloadSetId(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId, @Param("version") int version);
+    @Insert("INSERT INTO workload_item(workload_set_id,assignment_part_id,student_id,share,status,created_at,updated_at) VALUES(#{setId},#{partId},#{studentId},#{share},'VERIFIED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+    int insertSubmissionWorkloadItem(@Param("setId") long setId, @Param("partId") long partId, @Param("studentId") long studentId, @Param("share") java.math.BigDecimal share);
 
     @Select("SELECT a.course_id FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id AND sc.student_id=#{studentId} AND sc.status='ACTIVE' WHERE a.id=#{assignmentId} AND a.status IN ('PUBLISHED','CLOSED')")
     Long assignmentCourseForStudent(@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);

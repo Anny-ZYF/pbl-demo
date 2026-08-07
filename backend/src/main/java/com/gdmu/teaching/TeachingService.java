@@ -159,7 +159,8 @@ public class TeachingService {
         Map<String, Object> detail = mapper.studentAssignmentDetail(assignmentId, student.id());
         require(detail != null, HttpStatus.NOT_FOUND, "作业不存在或当前学生无权查看");
         Object groupId = detail.get("groupId");
-        detail.put("members", groupId == null ? List.of() : mapper.groupMembers(((Number) groupId).longValue()));
+        detail.put("members", groupId == null ? List.of() : mapper.studentGroupMembers(
+                ((Number) groupId).longValue(), assignmentId));
         detail.put("parts", mapper.studentAssignmentParts(assignmentId));
         detail.put("attachments", mapper.studentSubmissionAttachments(assignmentId, student.id()));
         return detail;
@@ -227,6 +228,7 @@ public class TeachingService {
         require(publishedAt != null && !LocalDateTime.now().isBefore(publishedAt.plusDays(2)), HttpStatus.CONFLICT, "当前处于组队期，暂不可提交作业");
         require(deadline != null, HttpStatus.CONFLICT, "作业未发布");
         require(!LocalDateTime.now().isAfter(deadline), HttpStatus.CONFLICT, "作业已截止");
+        saveSubmissionContributions(student, assignmentId, groupId, request);
         require((request.content() != null && !request.content().isBlank())
                         || (request.filePath() != null && !request.filePath().isBlank())
                         || (request.attachments() != null && !request.attachments().isEmpty()),
@@ -258,6 +260,38 @@ public class TeachingService {
             }
         }
         auditService.record(student, "SUBMISSION_SAVED", "ASSIGNMENT", assignmentId, Map.of("groupId", groupId));
+    }
+
+    private void saveSubmissionContributions(UserPrincipal student, long assignmentId, long groupId,
+                                             StudentSubmissionRequest request) {
+        List<Long> members = mapper.activeGroupStudentIds(groupId, assignmentId);
+        Map<Long, java.math.BigDecimal> requested = request.contributionScores();
+        require(requested != null && requested.keySet().equals(new java.util.LinkedHashSet<>(members)),
+                HttpStatus.BAD_REQUEST, "请为全部小组成员填写贡献值");
+        java.math.BigDecimal total = java.math.BigDecimal.ZERO;
+        for (Long memberId : members) {
+            java.math.BigDecimal value = requested.get(memberId);
+            require(value != null && value.compareTo(java.math.BigDecimal.ZERO) >= 0
+                            && value.compareTo(java.math.BigDecimal.valueOf(100)) <= 0,
+                    HttpStatus.BAD_REQUEST, "贡献值必须在0到100之间");
+            total = total.add(value);
+        }
+        require(total.subtract(java.math.BigDecimal.valueOf(100)).abs()
+                        .compareTo(java.math.BigDecimal.valueOf(0.01)) <= 0,
+                HttpStatus.BAD_REQUEST, "贡献值总和必须为100%");
+        int version = mapper.nextSubmissionWorkloadVersion(groupId, assignmentId);
+        mapper.supersedeSubmissionWorkloads(groupId, assignmentId);
+        mapper.insertSubmissionWorkloadSet(groupId, assignmentId, version, student.id());
+        long setId = mapper.submissionWorkloadSetId(groupId, assignmentId, version);
+        for (Long partId : mapper.assignmentPartIds(assignmentId)) {
+            for (Long memberId : members) {
+                mapper.insertSubmissionWorkloadItem(setId, partId, memberId,
+                        requested.get(memberId).divide(java.math.BigDecimal.valueOf(100), 6,
+                                java.math.RoundingMode.HALF_UP));
+            }
+        }
+        auditService.record(student, "SUBMISSION_CONTRIBUTIONS_SAVED", "WORKLOAD_SET", setId,
+                Map.of("assignmentId", assignmentId, "groupId", groupId));
     }
 
     private void require(boolean condition, HttpStatus status, String message) {

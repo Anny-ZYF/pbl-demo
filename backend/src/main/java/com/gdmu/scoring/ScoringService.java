@@ -280,7 +280,8 @@ public class ScoringService {
 
     @Transactional
     public void publish(UserPrincipal teacher, long runId) {
-        require(mapper.publishRun(runId, teacher.id()) == 1, HttpStatus.CONFLICT,
+        int updatedRuns = mapper.publishRun(runId, teacher.id());
+        require(updatedRuns > 0 || mapper.publishedRunOwned(runId, teacher.id()) == 1, HttpStatus.CONFLICT,
                 "评分运行不存在、不属于当前教师或尚未完成计算");
         int published = mapper.publishResults(runId);
         require(published > 0, HttpStatus.CONFLICT, "没有可发布的成绩");
