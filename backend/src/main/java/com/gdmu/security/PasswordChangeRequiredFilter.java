@@ -18,7 +18,8 @@ import java.util.Set;
 @Component
 public class PasswordChangeRequiredFilter extends OncePerRequestFilter {
     private static final Set<String> ALLOWED_PATHS = Set.of(
-            "/api/v1/auth/me", "/api/v1/auth/change-password", "/api/v1/auth/logout");
+            "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/me",
+            "/api/v1/auth/change-password", "/api/v1/auth/logout");
     private final ObjectMapper objectMapper;
 
     public PasswordChangeRequiredFilter(ObjectMapper objectMapper) {

@@ -17,7 +17,8 @@ const http = axios.create({
 })
 
 http.interceptors.request.use((config) => {
-  const token = readStoredToken()
+  const isPublicAuthRequest = config.url === '/auth/login' || config.url === '/auth/refresh'
+  const token = isPublicAuthRequest ? null : readStoredToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }

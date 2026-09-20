@@ -133,6 +133,12 @@ const routes = [
         meta: { title: '学生工作台' }
       },
       {
+        path: 'courses',
+        name: 'student-courses',
+        component: () => import('@/views/student/StudentCoursesView.vue'),
+        meta: { title: '我的课程' }
+      },
+      {
         path: 'course/:courseId',
         name: 'student-course',
         component: () => import('@/views/student/StudentCourseView.vue'),
@@ -195,7 +201,7 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = `${to.meta.title || '系统'} - 团队作业差异化评分系统`
+  document.title = `${to.meta.title || '系统'} - WiseCollab`
 })
 
 export default router

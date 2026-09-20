@@ -144,7 +144,14 @@ public class TeachingService {
 
     public List<Map<String, Object>> submissions(UserPrincipal teacher, long assignmentId) {
         require(mapper.ownsAssignment(assignmentId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "作业不存在或不属于当前教师");
-        return mapper.submissions(assignmentId, teacher.id());
+        List<Map<String, Object>> submissions = mapper.submissions(assignmentId, teacher.id());
+        for (Map<String, Object> submission : submissions) {
+            Object id = submission.get("id");
+            if (id instanceof Number number) {
+                submission.put("attachments", mapper.teacherSubmissionAttachments(number.longValue(), teacher.id()));
+            }
+        }
+        return submissions;
     }
 
     public List<Map<String, Object>> studentCourses(UserPrincipal student) {
