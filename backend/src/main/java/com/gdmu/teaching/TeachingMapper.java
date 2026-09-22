@@ -275,6 +275,7 @@ public interface TeachingMapper {
 
     @Select("""
             SELECT a.id,a.title,a.description,a.deadline,a.published_at AS publishedAt,a.total_score AS totalScore,
+                   a.standard_group_size AS standardGroupSize,
                    g.id AS groupId,g.name AS groupName,
                    sub.content,sub.file_path AS filePath,sub.submit_note AS submitNote,
                    sub.status AS submissionStatus,sub.teacher_score AS teacherScore,

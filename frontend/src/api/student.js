@@ -11,3 +11,4 @@ export const getAssignmentGroups = (assignmentId) => http.get(`/student/assignme
 export const leaveStudentGroup = (assignmentId) => http.delete(`/student/assignments/${assignmentId}/groups/me`)
 export const deleteSubmissionAttachment = (assignmentId, attachmentId) => http.delete(`/student/assignments/${assignmentId}/attachments/${attachmentId}`)
 export const uploadStudentFile = (file) => { const data = new FormData(); data.append('file', file); return http.post('/files', data, { headers: { 'Content-Type': 'multipart/form-data' } }) }
+export const downloadStudentFile = (storageKey) => http.get('/files', { params: { key: storageKey }, responseType: 'blob' })
