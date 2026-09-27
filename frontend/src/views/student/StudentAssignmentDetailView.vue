@@ -27,5 +27,232 @@ const submitAppeal = async () => { try { await appealScore(currentScore.value.sc
 onMounted(() => load().catch((error) => errorMessage.value = getErrorMessage(error, '作业详情加载失败')))
 </script>
 <style scoped>
-.page{width:min(1120px,100%);margin:auto;color:#30435f}.back{margin-bottom:16px;padding:0;border:0;color:#6982a5;background:none;cursor:pointer}.error{margin-bottom:15px;padding:12px;color:#b42318;background:#fff1f0}header{display:flex;justify-content:space-between;margin-bottom:17px;padding:3px 2px}.title{display:flex;align-items:center;gap:13px}.title h1{margin:0;color:#203454;font-size:25px}.title span{padding:5px 10px;border-radius:99px;font-size:10px}.pending{color:#d58a31;background:#fff3df}.submitted{color:#2f9b70;background:#eaf8f1}.reviewed{color:#477cdc;background:#ebf2ff}header p,header small{color:#7e8da1;font-size:11px}main{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.9fr);gap:18px;align-items:start}.left,.right{display:grid;gap:18px}.card{box-sizing:border-box;width:100%;padding:22px;border:1px solid #e2e9f3;border-radius:13px;background:#fff;box-shadow:0 5px 18px #2c486e0d}.card h2{margin:0 0 19px;font-size:16px}.description{color:#64768e;font-size:12px;line-height:1.9;white-space:pre-line}.rubric{margin-top:27px}.rubric h3{font-size:13px}.rubric>div{display:grid;grid-template-columns:1fr auto;gap:5px;padding:9px 0;color:#60738c;font-size:11px}.rubric b{color:#547bd3}.rubric small{grid-column:1/-1;color:#9aa6b5}.rubric i{grid-column:1/-1;display:block;height:6px;margin-top:4px;overflow:hidden;border-radius:99px;background:#edf2f8}.rubric em{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#4f7de3,#83a8f3)}.team>strong,.team label{display:flex;justify-content:space-between;gap:12px;padding:9px 11px;border-radius:8px;background:#f6f9fd;font-size:11px}.team>strong{margin-bottom:7px;color:#4c73c8;background:#edf3ff}.team label+label{margin-top:6px}.team input{width:110px;padding:7px;border:1px solid #dce5ef;border-radius:6px}.team em{font-style:normal}.grade>div{display:flex;align-items:center;gap:20px}.grade span{display:grid;font-size:10px}.grade b{color:#4575d2;font-size:22px}.grade button{margin-left:auto;padding:7px;border:0;color:#fff;background:#d98c4a}.grade p{color:#77879b;font-size:11px}.readonly{display:grid;gap:10px}.readonly>b{padding:12px;color:#2e9870;background:#ebf8f2}.readonly p{color:#718198;font-size:11px}.readonly a{display:flex;justify-content:space-between;padding:10px;border:1px solid #e2e9f2;border-radius:8px;color:#526fbd;text-decoration:none}.loading{text-align:center;padding:50px}.dialog{position:fixed;z-index:50;inset:0;display:grid;place-items:center;background:#263b5355}.dialog>div{width:min(420px,90%);padding:24px;background:#fff}.dialog textarea{box-sizing:border-box;width:100%;min-height:120px;margin:12px 0}@media(max-width:820px){main{grid-template-columns:1fr}header{flex-direction:column}}@media(max-width:520px){.title{align-items:flex-start;flex-direction:column}.card{padding:17px}}
-</style>
+.page {
+  width: min(1120px, 100%);
+  margin: auto;
+  color: #30435f;
+}
+
+.back {
+  margin-bottom: 16px;
+  padding: 0;
+  border: 0;
+  color: #6982a5;
+  background: none;
+  cursor: pointer;
+}
+
+.error {
+  margin-bottom: 15px;
+  padding: 12px;
+  color: #b42318;
+  background: #fff1f0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 17px;
+  padding: 3px 2px;
+}
+.title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.title h1 {
+  margin: 0;
+  color: #203454;
+  font-size: 25px;
+}
+.title span {
+  padding: 5px 10px;
+  border-radius: 99px;
+  font-size: 10px;
+}
+
+.pending   { color: #d58a31; background: #fff3df; }
+.submitted { color: #2f9b70; background: #eaf8f1; }
+.reviewed  { color: #477cdc; background: #ebf2ff; }
+
+header p,
+header small {
+  color: #7e8da1;
+  font-size: 11px;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.9fr);
+  gap: 18px;
+  align-items: stretch;
+}
+.left,
+.right {
+  display: grid;
+  gap: 18px;
+  width: 100%;
+}
+
+.card {
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: none !important;
+  padding: 22px;
+  border: 1px solid #e2e9f3;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 5px 18px #2c486e0d;
+}
+.card h2 {
+  margin: 0 0 19px;
+  font-size: 16px;
+}
+
+.description {
+  color: #64768e;
+  font-size: 12px;
+  line-height: 1.9;
+  white-space: pre-line;
+}
+
+.rubric { margin-top: 27px; }
+.rubric h3 { font-size: 13px; }
+.rubric > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px;
+  padding: 9px 0;
+  color: #60738c;
+  font-size: 11px;
+}
+.rubric b { color: #547bd3; }
+.rubric small {
+  grid-column: 1 / -1;
+  color: #9aa6b5;
+}
+.rubric i {
+  grid-column: 1 / -1;
+  display: block;
+  height: 6px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #edf2f8;
+}
+.rubric em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4f7de3, #83a8f3);
+}
+
+.team > strong,
+.team label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #f6f9fd;
+  font-size: 11px;
+}
+.team > strong {
+  margin-bottom: 7px;
+  color: #4c73c8;
+  background: #edf3ff;
+}
+.team label + label { margin-top: 6px; }
+.team input {
+  width: 110px;
+  padding: 7px;
+  border: 1px solid #dce5ef;
+  border-radius: 6px;
+}
+.team em { font-style: normal; }
+
+.grade > div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.grade span {
+  display: grid;
+  font-size: 10px;
+}
+.grade b {
+  color: #4575d2;
+  font-size: 22px;
+}
+.grade button {
+  margin-left: auto;
+  padding: 7px;
+  border: 0;
+  color: #fff;
+  background: #d98c4a;
+}
+.grade p {
+  color: #77879b;
+  font-size: 11px;
+}
+
+.readonly {
+  display: grid;
+  gap: 10px;
+}
+.readonly > b {
+  padding: 12px;
+  color: #2e9870;
+  background: #ebf8f2;
+}
+.readonly p {
+  color: #718198;
+  font-size: 11px;
+}
+.readonly a {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  border: 1px solid #e2e9f2;
+  border-radius: 8px;
+  color: #526fbd;
+  text-decoration: none;
+}
+
+.loading {
+  text-align: center;
+  padding: 50px;
+}
+
+.dialog {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #263b5355;
+}
+.dialog > div {
+  width: min(420px, 90%);
+  padding: 24px;
+  background: #fff;
+}
+.dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 120px;
+  margin: 12px 0;
+}
+
+@media (max-width: 820px) {
+  main { grid-template-columns: 1fr; }
+  header { flex-direction: column; }
+}
+
+@media (max-width: 520px) {
+  .title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .card { padding: 17px; }
+}</style>

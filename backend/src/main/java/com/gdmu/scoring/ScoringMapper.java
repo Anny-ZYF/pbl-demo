@@ -388,7 +388,18 @@ public interface ScoringMapper {
             LEFT JOIN model_version mv ON mv.id=sr.model_version_id
             LEFT JOIN scoring_rule rule ON rule.id=sr.scoring_rule_id
             LEFT JOIN scoring_input_snapshot snap ON snap.scoring_run_id=sr.id AND snap.student_id=r.student_id
-            WHERE r.student_id=#{studentId} AND r.status='PUBLISHED' ORDER BY r.published_at DESC
+            WHERE r.student_id=#{studentId} AND r.status='PUBLISHED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM score_result newer
+                  JOIN scoring_run newer_run ON newer_run.id=newer.scoring_run_id
+                  WHERE newer.student_id=r.student_id
+                    AND newer.status='PUBLISHED'
+                    AND newer_run.assignment_id=sr.assignment_id
+                    AND (newer.published_at>r.published_at
+                         OR (newer.published_at=r.published_at AND newer.id>r.id))
+              )
+            ORDER BY r.published_at DESC
             """)
     List<Map<String, Object>> publishedScores(long studentId);
 
