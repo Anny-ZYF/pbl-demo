@@ -260,7 +260,7 @@ public interface TeachingMapper {
     List<Map<String, Object>> studentCourses(long studentId);
 
     @Select("""
-            SELECT a.id,a.title,a.description,a.deadline,a.status,a.total_score AS totalScore,
+            SELECT a.id,a.title,a.description,a.deadline,a.published_at AS publishedAt,a.status,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,
                    (a.published_at IS NOT NULL AND CURRENT_TIMESTAMP < DATE_ADD(a.published_at, INTERVAL 2 DAY)) AS teamFormation,
                    EXISTS(SELECT 1 FROM scoring_run sr WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED') AS scorePublished,
