@@ -45,5 +45,8 @@ onMounted(async()=>{loading.value=true;try{courses.value=await getCourses();assi
 .progress-summary{display:none!important}
 .progress-content{grid-template-columns:130px minmax(0,1fr)!important}
 .focus-button svg{width:12px;height:12px;flex:0 0 12px}
+.course-body button svg{width:12px;height:12px;flex:0 0 12px}
+.assistant-card h2{display:flex;align-items:center;gap:6px}
+.assistant-card h2 svg{width:18px;height:18px;flex:0 0 18px}
 @media(max-width:1050px){.progress-content{grid-template-columns:110px minmax(0,1fr)!important}}
 </style>

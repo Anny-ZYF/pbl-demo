@@ -1,7 +1,18 @@
 from __future__ import annotations
 
-from scripts.train_model import _stratified_folds, _stratified_holdout
+import hashlib
+from pathlib import Path
+
+from scripts.train_model import _stratified_folds, _stratified_holdout, _write_json
 from app.dataset import generate_paper_samples
+
+
+def test_artifact_hash_survives_git_lf_normalization(tmp_path: Path) -> None:
+    path = tmp_path / "metadata.json"
+    _write_json(path, {"version": "test", "status": "ELIGIBLE"})
+    generated = path.read_bytes()
+    checked_out = generated.replace(b"\r\n", b"\n")
+    assert hashlib.sha256(generated).digest() == hashlib.sha256(checked_out).digest()
 
 
 def test_holdout_is_deterministic_and_stratified_by_actual_group_size() -> None:

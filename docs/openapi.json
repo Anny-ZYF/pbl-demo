@@ -90,7 +90,9 @@
               }
             }
           }
-        }
+        },
+        "summary": "逐人复核本次评分运行",
+        "description": "必须提交本次运行的全部成员成绩；调整建议分必须填写理由。只有 MODEL_COMPLETE 或 DEGRADED 可复核，成功后进入 APPROVED。"
       }
     },
     "/api/v1/teacher/assignments/{assignmentId}/groups/{groupId}/workload": {
@@ -525,7 +527,9 @@
               }
             }
           }
-        }
+        },
+        "summary": "发布本次已复核的评分运行",
+        "description": "仅发布路径中指定的运行及其成员结果，不影响同作业其他运行。运行须为 APPROVED 且全部结果为 REVIEWED，否则返回 409；不属于当前教师返回 404。重复发布已发布的运行返回 200，不改写时间、投影或审计。"
       }
     },
     "/api/v1/teacher/courses/{courseId}/assignments": {

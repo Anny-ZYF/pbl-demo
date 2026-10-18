@@ -50,13 +50,7 @@ public class ScoringService {
                 HttpStatus.CONFLICT, "提交不存在、不属于当前教师或成绩已经发布");
         auditService.record(teacher, "GROUP_SCORE_RECORDED", "SUBMISSION", submissionId,
                 Map.of("groupScore", request.groupScore()));
-        try {
-            runScoring(teacher, submissionId);
-        } catch (BusinessException scoringError) {
-            mapper.fallbackIndividualScores(submissionId, teacher.id());
-            auditService.record(teacher, "SCORING_FALLBACK_TEACHER_SCORE", "SUBMISSION", submissionId,
-                    Map.of("reason", scoringError.getMessage()));
-        }
+        runScoring(teacher, submissionId);
     }
 
     @Transactional
@@ -246,9 +240,13 @@ public class ScoringService {
 
     @Transactional
     public void reviewAndApprove(UserPrincipal teacher, long runId, ScoreReviewRequest request) {
-        require(mapper.teacherRun(runId, teacher.id()) != null, HttpStatus.NOT_FOUND,
+        String status = mapper.lockTeacherRunStatus(runId, teacher.id());
+        require(status != null, HttpStatus.NOT_FOUND,
                 "评分运行不存在或不属于当前教师");
+        require(status.equals("MODEL_COMPLETE") || status.equals("DEGRADED"), HttpStatus.CONFLICT,
+                "当前评分运行不可复核，请刷新后重试");
         List<Map<String, Object>> existing = mapper.runResults(runId);
+        require(!existing.isEmpty(), HttpStatus.CONFLICT, "本次运行没有可复核的成绩");
         require(request.decisions().size() == existing.size(), HttpStatus.BAD_REQUEST, "必须复核本次运行的全部成员成绩");
         Set<Long> expected = existing.stream().map(row -> ((Number) row.get("id")).longValue()).collect(Collectors.toSet());
         Set<Long> actual = request.decisions().stream().map(ScoreReviewRequest.Decision::scoreResultId).collect(Collectors.toSet());
@@ -280,11 +278,17 @@ public class ScoringService {
 
     @Transactional
     public void publish(UserPrincipal teacher, long runId) {
-        int updatedRuns = mapper.publishRun(runId, teacher.id());
-        require(updatedRuns > 0 || mapper.publishedRunOwned(runId, teacher.id()) == 1, HttpStatus.CONFLICT,
-                "评分运行不存在、不属于当前教师或尚未完成计算");
+        String status = mapper.lockTeacherRunStatus(runId, teacher.id());
+        require(status != null, HttpStatus.NOT_FOUND, "评分运行不存在或不属于当前教师");
+        // Repeated requests must not rewrite publication dates, projections or audit history.
+        if (status.equals("PUBLISHED")) return;
+        require(status.equals("APPROVED"), HttpStatus.CONFLICT, "请先完成本次运行全部成员成绩的复核");
+        int resultCount = mapper.runResults(runId).size();
+        require(resultCount > 0 && mapper.unreviewedResultCount(runId) == 0, HttpStatus.CONFLICT,
+                "本次运行必须包含成绩且全部完成复核");
+        require(mapper.publishRun(runId, teacher.id()) == 1, HttpStatus.CONFLICT, "评分运行状态已变化，请刷新后重试");
         int published = mapper.publishResults(runId);
-        require(published > 0, HttpStatus.CONFLICT, "没有可发布的成绩");
+        require(published == resultCount, HttpStatus.CONFLICT, "成绩状态已变化，未发布任何成绩，请刷新后重试");
         mapper.markSubmissionPublished(runId);
         mapper.projectIndividualScores(runId);
         mapper.projectFinalScores(runId);

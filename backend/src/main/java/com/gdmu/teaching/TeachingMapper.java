@@ -55,10 +55,11 @@ public interface TeachingMapper {
     @Select("""
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
                    CASE WHEN g.id IS NULL THEN NULL ELSE CONCAT('Team', LPAD(COALESCE(CAST(REGEXP_SUBSTR(g.name, '[0-9]+') AS UNSIGNED), g.id), 2, '0')) END AS groupName,
-                   sr.id AS scoringRunId,COALESCE(r.final_score, fs.score) AS finalScore,
+                   sr.id AS scoringRunId,sr.status AS runStatus,COALESCE(r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
                    r.status AS scoringStatus,
-                   CASE WHEN sr.status='PUBLISHED' THEN 1 ELSE COALESCE(i.is_published, 0) END AS scorePublished,
+                   CASE WHEN sr.id IS NOT NULL THEN sr.status='PUBLISHED' AND r.status='PUBLISHED'
+                        ELSE COALESCE(i.is_published, 0) END AS scorePublished,
                    COALESCE(r.contribution, i.contribution_ratio / 100,
                      (SELECT SUM(wi.share * ap.weight) FROM workload_item wi
                       JOIN workload_set ws ON ws.id=wi.workload_set_id

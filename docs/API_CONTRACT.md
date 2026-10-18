@@ -408,7 +408,7 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 | `GET /teacher/appeals` | 无 | 申诉数组 | 200 |
 | `PUT /teacher/appeals/{appealId}` | `AppealResolveRequest` | `null` | 200 |
 
-团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；成功后提交状态为 `GRADED`。
+团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；成功后提交状态为 `GRADED` 并生成待复核运行。输入不满足评分条件时返回真实错误并回滚本次批改，不会直接生成已发布的兜底成绩；模型不可用仍通过确定性规则生成待复核运行。
 
 工作量请求：
 
@@ -476,7 +476,11 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 }
 ```
 
-`finalScore` 为 `0..100`。若与当前建议分相差超过 `0.005`，`reason` 必填且最长 500。全部结果成功变为 `REVIEWED` 后运行变为 `APPROVED`。只有 `APPROVED` 可发布；发布后结果为 `PUBLISHED`，学生可见。
+`finalScore` 为 `0..100`。若与当前建议分相差超过 `0.005`，`reason` 必填且最长 500。全部结果成功变为 `REVIEWED` 后运行变为 `APPROVED`。只有 `APPROVED` 且全部结果为 `REVIEWED` 才可发布，否则返回 409；非归属运行返回 404。
+
+发布只作用于路径中的 `runId`、该运行的个人成绩、对应提交和查询投影，不联动同一作业的其他小组或历史运行。重复发布已经发布的运行返回 200，但不修改发布时间、审计或投影，也不重置申诉后的成绩。复核与发布通过数据库行锁串行处理。
+
+教师成绩列表增加 `runStatus`，表示当前返回的 `scoringRunId` 状态；`scorePublished` 随当前运行计算，不能沿用更早运行的已发布标记。教师页面按小组逐人复核、单独发布，展示当前结果状态。
 
 教师申诉项：`id`、`scoreResultId`、`studentId`、`studentName`、`assignmentTitle`、`reason`、`evidence`、`status`、`resolution`、`submittedAt`、`resolvedAt`、`currentScore`。
 
