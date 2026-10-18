@@ -434,3 +434,37 @@ Windows 可用 `mysqldump.exe` 输出到受保护目录，并由任务计划程�
 - [ ] 数据库、上传、模型产物和备份都有访问控制与恢复演练。
 - [ ] 激活模型的版本、指标、特征、规则版本和哈希完全匹配。
 - [ ] 上线前完成角色隔离、模型回退、人工复核和申诉闭环验证。
+
+## 12. pbl.luzujian.com 的独立 Compose 部署
+
+服务器目录为 `/root/workspace/pbl`，运行配置为 `deploy/compose.production.yaml`，Compose 项目名固定为 `pbl`。此配置使用本地或 CI 已编译的 `backend/target/groupwork-1.0.0.jar` 和 `frontend/dist`，通过 `deploy/Dockerfile.runtime` 构建运行镜像，不在生产服务器执行 Maven 或 Node 构建。修改源码后必须先重新测试、编译并上传对应产物。
+
+MySQL、算法、后端和前端分别设置 640、384、768、64 MiB 的内存上限，并限制容器日志大小。后端、算法和数据库统一使用 `Asia/Shanghai` 时区。MySQL、算法和后端没有发布宿主机端口；前端仅绑定 `127.0.0.1:15880`，对外流量由共享 HTTPS 网关通过 `pbl-edge` 网络的 `pbl-web` 别名转发。
+
+算法镜像安装 [XGBoost 官方 CPU 包](https://xgboost.readthedocs.io/en/stable/install.html#minimal-installation-cpu-only)，不包含 GPU 依赖。构建时可通过 `.env` 的 `PBL_DEBIAN_MIRROR` 和 `PBL_PIP_INDEX_URL` 选择下载源；本次服务器使用阿里云镜像。模型文件、校验哈希和评分公式保持原样。
+
+所有运维命令显式指定私密环境文件和生产 Compose 文件：
+
+```bash
+cd /root/workspace/pbl
+docker compose --env-file .env -f deploy/compose.production.yaml config --quiet
+docker compose --env-file .env -f deploy/compose.production.yaml ps
+docker compose --env-file .env -f deploy/compose.production.yaml logs --tail=100 backend algorithm
+```
+
+更新时设置新的 `PBL_RELEASE`，先备份，再构建与启动本项目的镜像。重建后端后，应执行 `docker compose --env-file .env -f deploy/compose.production.yaml exec -T frontend nginx -s reload`，刷新前端 Nginx 缓存的后端地址。不要对其他 Compose 项目执行重建，也不要全局清理 Docker 资源。
+
+共享网关配置位于 `/root/workspace/internship-system/nginx/nginx.conf`。该文件是单文件绑定挂载，修改时必须保留 inode，先 `nginx -t` 再平滑重载。PBL 的外部网络也已写入共享网关的 Compose override，后续重建网关时仍可解析 `pbl-web`。
+
+共享网关现有容器的 `HostConfig.NetworkMode` 仍引用 `internai-edge`。为保持现有容器运行，本次保留了一个无容器、标记用途为 `shared-ingress-legacy-networkmode-compatibility` 的同名兼容网络。它不运行旧测试系统；在共享网关通过当前 Compose 配置重建并确认不再引用该名称前，不要删除这个兼容网络。
+
+HTTPS 使用 `pbl.luzujian.com` 独立证书和 DNS-01 验证，凭据仅位于服务器 `/root/.secrets/certbot/cloudflare-pbl.ini`，权限为 600。续期由现有 Certbot 定时器触发；`/etc/letsencrypt/renewal-hooks/deploy/renew-pbl.sh` 仅处理 PBL 证书，复制证书后检查并平滑重载共享 Nginx。
+
+```bash
+certbot renew --cert-name pbl.luzujian.com --dry-run \
+  --run-deploy-hooks --non-interactive --no-random-sleep-on-renew
+```
+
+首次启动只初始化管理员、规则和模型元数据，不导入本机合成测试师生或课程。管理员完成首次改密后，清空 `.env` 中的 `BOOTSTRAP_ADMIN_*`，并仅重建 PBL 后端。真实密码不写入本文或 Git；本机交付信息在被忽略的 `.codex/deployment/` 受限目录中。
+
+部署前的共享配置、部署记录和初始数据库/上传备份位于 `/root/workspace/deploy-backups/pbl-deploy-20261018`，初始备份另存本机并校验 SHA-256。密钥配置与数据压缩包分开保存。初始备份不代表已完成恢复演练，也不代替后续定期业务数据备份。

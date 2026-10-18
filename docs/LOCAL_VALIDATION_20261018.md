@@ -77,7 +77,7 @@ mvn -Dtest=ScoringPublicationMySqlTest test
 
 ## 4. Linux + Docker Compose 测试部署
 
-本机未安装 Docker，未执行容器镜像构建和 `docker compose up`，也尚未连接服务器。MySQL 8.4、镜像内 Java/Python 版本、Linux 文件权限、Nginx 代理及 HTTPS 均需在目标服务器复查。
+本节记录本地验证结束时的部署准备：当时本机未安装 Docker，也未连接服务器。随后完成的 MySQL 8.4、Linux 容器、Nginx 与 HTTPS 实测结果见第 6 节。
 
 1. 根据服务器发行版按 [Docker 官方安装入口](https://docs.docker.com/engine/install/) 安装 Docker Engine 与 Compose 插件，确认 `docker version`、`docker compose version` 可用。
 2. 将部署源码包上传并解压到独立目录，例如 `/opt/pbl-demo`，或拉取包含本次修复的 GitHub 提交。部署前核对源码版本与本文对应的修复内容。
@@ -115,3 +115,33 @@ docker compose exec -T algorithm python -c "import json,urllib.request; h=json.l
 本次临时预览地址：`http://127.0.0.1:15173`。管理员用户名 `pbl_admin`；本地验证密码保存在未纳入 Git 的 `.codex/validation/local-secrets.json`，管理员最终密码字段为 `adminPassword`。教师 `pbl_teacher1`、学生 `pbl_student1` 使用 `testPassword` 字段。所有账号与课程仅属于隔离测试库。
 
 本地服务监听端口：前端 15173、Java 18081、算法 18001、MySQL 13316，均为 127.0.0.1。它们是临时验证进程，不是正式服务器服务。
+
+## 6. 服务器部署与验证
+
+2026-10-18 14:35（北京时间）完成服务器复查。正式地址为 `https://pbl.luzujian.com`，部署目录为 `/root/workspace/pbl`，使用 `deploy/compose.production.yaml`。应用产物基于修复提交 `4a6788b`；生产部署配置另由服务器 `release-manifest.json` 记录文件哈希，可据此核对仓库文件与实际部署产物。
+
+| 项目 | 实际结果 |
+|---|---|
+| 容器 | `pbl-mysql-1`、`pbl-algorithm-1`、`pbl-backend-1`、`pbl-frontend-1` 均为 healthy，没有崩溃重启。 |
+| 新库初始化 | MySQL 8.4 导入 schema/seed，Flyway 的 1–4 版本记录成功；正式库只有 1 个管理员，教师、学生、课程均为 0。 |
+| 时区 | 后端、算法和数据库均配置 `Asia/Shanghai`；后端日志及管理页面时间与北京时间一致。 |
+| 本轮构建测试 | Java 常规测试 41 项、前端 9 项、Python 本地 29 项通过，前后端构建成功。本轮未重跑真实 MySQL 的 5 项集成测试，默认跳过；先前执行结果仍见第 1、3 节。 |
+| Linux 算法镜像 | 在正式 CPU 推理镜像的临时容器中运行全部 29 项 Python 测试，通过后删除测试容器。 |
+| 公网浏览器 | 实际访问正式域名，完成初次登录、强制改密、再次登录，以及工作台、组织账号、教学数据、评分模型、审计日志五个页面；桌面和手机尺寸检查通过，无未捕获脚本错误或失败业务请求。 |
+| 最终浏览器复查 | 移除初始化密码、重建 PBL 后端及证书续期 hook 执行后，重新登录并检查工作台、评分模型页，仍正常。 |
+| 管理接口 | 登录、当前用户、工作台、组织、账号、课程、模型、评分运行、异常、审计及退出接口返回预期结果。 |
+| 权限与来源 | 匿名访问管理接口为 401，管理员访问教师/学生业务接口为 403；同源 OPTIONS 为 200，其他 Origin 为 403。 |
+| 模型 | 已激活 `xgb-p4-seed2025-172a3cf9486e`；后端容器使用实际配置的 URL/Token 访问算法服务成功，算法匿名访问为 401。实际预测样例规则分 95.506576、模型分 95.427322。 |
+| 代理与上传目录 | 2 MiB 未认证请求经两层 Nginx 后返回 401，没有触发 413；应用用户 UID 10001 可写持久化上传目录。此项不等同于已在生产库执行学生附件上传/下载。 |
+| HTTPS | 独立证书 SAN 为 `pbl.luzujian.com`，有效期至 2027-01-16；证书部署文件一致，Certbot 定时器启用且运行。 |
+| 续期 | 正式签发使用 DNS-01。模拟续期直连测试 CA 超时，经临时代理完成 DNS 验证与部署 hook，Certbot 报告成功；Cloudflare DNS 请求仍由服务器直连，临时代理已关闭，未修改正式定时任务的网络配置。 |
+| 其他项目 | 原有 20 个容器的身份、镜像、配置、挂载、启动时间和运行状态保持一致，仅共享网关加入 PBL 网络；实习系统、腺样体网站返回 200，旧测试域名仍返回 410。 |
+| 备份 | 初始数据库、上传目录和部署记录已备份到服务器及本机，SHA-256 校验通过。密钥配置单独保存；本轮没有执行数据库恢复演练。 |
+
+公网可用性依据为真实浏览器及其业务请求。Windows curl 的 TLS 握手失败没有被计为通过，服务端 curl 的结果也没有代替公网浏览器验证。
+
+管理员账号为 `pbl_admin`，密码保存在未纳入 Git 的 `.codex/deployment/admin-credentials.json`。一次性初始化密码已从服务器环境和本机交付信息中移除。运行环境密钥单独位于受限文件，未进入 Git、构建上下文或数据备份压缩包；含初始化密钥的临时上传包已删除。
+
+本机证据包括 `.codex/deployment/production-browser.json`、`production-browser-final.json`、`production-api.json`、`deployment-result.json`、`certificate-renewal-proxy.log` 和 `initial-backup-verified.json`。服务器记录位于 `/root/workspace/deploy-backups/pbl-deploy-20261018`。
+
+最终检查时服务器剩余磁盘约 1.94 GB、可用内存约 2.5 GiB。共享网关还保留一个无容器的旧名称兼容网络，原因及维护边界见 `DEPLOYMENT.md` 第 12 节。没有恢复旧测试环境的容器、数据库或部署目录。正式教学库未写入合成测试课程，因此本次没有在生产库重放教师评分、成绩发布和申诉完整流程；这些业务回归的既有本地证据见第 3 节。

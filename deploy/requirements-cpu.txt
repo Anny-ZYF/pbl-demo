@@ -1,0 +1,4 @@
+-r requirements.txt
+numpy>=1.26,<3.0
+# CPU inference exposes the same xgboost API without CUDA dependencies.
+xgboost-cpu>=2.1,<4.0
