@@ -255,10 +255,15 @@ Authorization: Bearer <accessToken>
 }
 ```
 
+- 管理员创建接口仅接受教师和学生角色，登录账号在所有角色之间必须唯一。
+- 教师必须填写姓名、工号和所属学院，不得携带专业、班级或年级。
+- 学生必须填写姓名、学号、所属学院、专业、班级和年级；专业必须属于所选学院，班级必须属于所选专业，且相关组织必须处于启用状态。
+- 工号/学号最长 20；年级范围为 2000–2100。未提供初始密码时使用 `ABC` 加登录账号，首次登录必须修改。
+
 - `displayName` 也接受别名 `name`；最长 50。
 - `initialPassword` 可省略；若提供须为 8–64 位且含字母和数字。
-- 省略密码时服务器生成临时密码。成功响应为 `{username,role,temporaryPassword,mustChangePassword:true}`；临时密码只应在受控流程中显示一次，不得写入前端日志。
-- `role` 可为管理员，但当前管理员页面的常规账号创建只面向教师和学生。
+- 省略或留空密码时，初始密码为 `ABC` 加清理后的登录账号，例如账号 `20260101` 对应 `ABC20260101`。成功响应为 `{username,role,temporaryPassword,mustChangePassword:true}`；初始密码不得写入前端日志。
+- `role` 仅接受教师或学生。
 
 更新请求不允许改用户名和角色，只用 `role` 定位物理表：
 
@@ -339,6 +344,7 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 | 方法与路径 | 请求 | 成功 `data` | HTTP |
 |---|---|---|---|
 | `GET /teacher/courses` | 无 | 课程数组 | 200 |
+| `POST /teacher/courses` | `CourseCreateRequest` | `{id,name,status:"ACTIVE"}` | **201** |
 | `GET /teacher/courses/{courseId}/assignments` | 无 | 作业数组 | 200 |
 | `GET /teacher/courses/{courseId}/students` | `assignmentId?` | 课程学生候选数组 | 200 |
 | `POST /teacher/courses/{courseId}/assignments` | `AssignmentCreateRequest` | `{id,status:"DRAFT"}` | **201** |
@@ -349,6 +355,8 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 | `GET /teacher/assignments/{assignmentId}/submissions` | 无 | 提交数组 | 200 |
 
 教师课程项：`id`、`code`、`name`、`term`、`grade`、`status`、`beginDate`、`endDate`、`studentCount`。
+
+`CourseCreateRequest`：`name` 必填；`code`、`term`、`grade`、`beginDate`、`endDate` 可选。课程代码必须唯一，结束日期不能早于开始日期。
 
 教师作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`createdAt`、`groupCount`、`submissionCount`。
 

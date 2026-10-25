@@ -27,6 +27,14 @@ public class TeacherController {
         return ApiResponse.ok(service.teacherCourses(teacher));
     }
 
+    @PostMapping("/courses")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> createCourse(
+            @AuthenticationPrincipal UserPrincipal teacher,
+            @Valid @RequestBody CourseCreateRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created(service.createCourse(teacher, request)));
+    }
+
     @GetMapping("/courses/{courseId}/assignments")
     public ApiResponse<List<Map<String, Object>>> assignments(@AuthenticationPrincipal UserPrincipal teacher,
                                                               @PathVariable long courseId) {

@@ -17,8 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import jakarta.validation.Valid;
 
-import java.security.SecureRandom;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,8 +32,6 @@ public class AdminService {
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
-    private final SecureRandom random = new SecureRandom();
-
     public AdminService(AdminMapper mapper, AccountMapper accountMapper, PasswordEncoder passwordEncoder,
                         AuditService auditService, ObjectMapper objectMapper) {
         this.mapper = mapper;
@@ -106,28 +102,34 @@ public class AdminService {
     @Transactional
     public Map<String, Object> createAccount(UserPrincipal admin, @Valid AccountCreateRequest request) {
         Role role = Role.parse(request.role());
+        require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "管理员只能创建教师或学生账号");
+        String username = request.username().trim();
+        require(mapper.accountUsernameCount(username) == 0, HttpStatus.CONFLICT, "登录账号已被使用");
+        validateOrganization(role, request.departmentId(), request.majorId(), request.classId(), request.grade());
         String temporaryPassword = request.initialPassword() == null || request.initialPassword().isBlank()
-                ? generatedPassword() : request.initialPassword();
+                ? generatedPassword(username) : request.initialPassword();
         String hash = passwordEncoder.encode(temporaryPassword);
         try {
             switch (role) {
-                case ADMIN -> mapper.insertAdmin(request.username().trim(), hash, request.displayName().trim());
-                case TEACHER -> mapper.insertTeacher(request.username().trim(), hash, request.displayName().trim(), request.departmentId());
-                case STUDENT -> mapper.insertStudent(request.username().trim(), hash, request.displayName().trim(),
+                case TEACHER -> mapper.insertTeacher(username, hash, request.displayName().trim(), request.departmentId());
+                case STUDENT -> mapper.insertStudent(username, hash, request.displayName().trim(),
                         request.majorId(), request.classId(), request.grade());
+                default -> throw new BusinessException(HttpStatus.BAD_REQUEST, "不支持的账号角色");
             }
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(HttpStatus.CONFLICT, "账号已存在");
         }
-        auditService.record(admin, "ACCOUNT_CREATED", "ACCOUNT", role + ":" + request.username(),
-                Map.of("role", role.name(), "username", request.username()));
-        return Map.of("username", request.username(), "role", role.name(), "temporaryPassword", temporaryPassword,
+        auditService.record(admin, "ACCOUNT_CREATED", "ACCOUNT", role + ":" + username,
+                Map.of("role", role.name(), "username", username));
+        return Map.of("username", username, "role", role.name(), "temporaryPassword", temporaryPassword,
                 "mustChangePassword", true);
     }
 
     @Transactional
     public void updateAccount(UserPrincipal admin, long id, AccountUpdateRequest request) {
         Role role = Role.parse(request.role());
+        require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "只允许维护教师或学生账号");
+        validateOrganization(role, request.departmentId(), request.majorId(), request.classId(), request.grade());
         int changed = switch (role) {
             case ADMIN -> mapper.updateAdmin(id, request.displayName().trim());
             case TEACHER -> mapper.updateTeacher(id, request.displayName().trim(), request.departmentId());
@@ -343,10 +345,28 @@ public class AdminService {
         }
     }
 
-    private String generatedPassword() {
-        byte[] bytes = new byte[8];
-        random.nextBytes(bytes);
-        return "Gdmu9-" + HexFormat.of().formatHex(bytes);
+    private void require(boolean condition, HttpStatus status, String message) {
+        if (!condition) {
+            throw new BusinessException(status, message);
+        }
+    }
+
+    private void validateOrganization(Role role, Long departmentId, Long majorId, Long classId, Integer grade) {
+        require(departmentId != null, HttpStatus.BAD_REQUEST, role == Role.TEACHER ? "教师所属学院不能为空" : "学生所属学院不能为空");
+        require(mapper.activeDepartment(departmentId) == 1, HttpStatus.BAD_REQUEST, "所属学院不存在或已停用");
+        if (role == Role.TEACHER) {
+            require(majorId == null && classId == null && grade == null, HttpStatus.BAD_REQUEST, "教师账号不能设置专业、班级或年级");
+            return;
+        }
+        require(majorId != null, HttpStatus.BAD_REQUEST, "学生专业不能为空");
+        require(classId != null, HttpStatus.BAD_REQUEST, "学生班级不能为空");
+        require(grade != null && grade >= 2000 && grade <= 2100, HttpStatus.BAD_REQUEST, "学生年级必须在2000至2100之间");
+        require(mapper.activeMajorInDepartment(majorId, departmentId) == 1, HttpStatus.BAD_REQUEST, "专业不属于所选学院或已停用");
+        require(mapper.activeClassInMajor(classId, majorId) == 1, HttpStatus.BAD_REQUEST, "班级不属于所选专业或已停用");
+    }
+
+    private String generatedPassword(String username) {
+        return "ABC" + username;
     }
 
     private record Page(int number, int size, int offset) { }

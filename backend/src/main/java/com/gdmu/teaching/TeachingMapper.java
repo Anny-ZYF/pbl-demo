@@ -9,6 +9,15 @@ import java.util.Optional;
 
 @Mapper
 public interface TeachingMapper {
+    @Insert("""
+            INSERT INTO course(code,name,teacher_id,term,grade,begin_date,end_date,status,create_time,update_time)
+            VALUES(#{r.code},#{r.name},#{teacherId},#{r.term},#{r.grade},#{r.beginDate},#{r.endDate},'ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            """)
+    int insertCourse(@Param("teacherId") long teacherId, @Param("r") CourseCreateRequest request);
+
+    @Select("SELECT LAST_INSERT_ID()")
+    long lastCourseId();
+
     @Select("""
             SELECT c.id,c.code,c.name,c.term,c.grade,c.status,c.begin_date AS beginDate,c.end_date AS endDate,
                    (SELECT COUNT(*) FROM student_course sc WHERE sc.course_id=c.id AND sc.status='ACTIVE') AS studentCount
@@ -319,25 +328,68 @@ public interface TeachingMapper {
     @Select("SELECT g.id,g.name,CAST(SUBSTRING(g.name,2,LENGTH(g.name)-3) AS UNSIGNED) AS groupNo,g.max_members AS maxMembers,COUNT(gm.id) AS memberCount FROM group_table g LEFT JOIN group_member gm ON gm.group_id=g.id AND gm.status='ACTIVE' WHERE g.assignment_id=#{assignmentId} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED') GROUP BY g.id ORDER BY g.id")
     List<Map<String,Object>> studentAssignmentGroups(long assignmentId);
 
-    @Delete("DELETE FROM group_member WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
+    @Select("SELECT role FROM group_member WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
+    String activeGroupMemberRole(@Param("groupId") long groupId,@Param("studentId") long studentId);
+
+    @Update("UPDATE group_member SET status='LEFT',left_time=CURRENT_TIMESTAMP,update_time=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
     int leaveStudentGroup(@Param("groupId") long groupId,@Param("studentId") long studentId);
 
-    @Update("UPDATE group_table SET team_status='DISSOLVED',update_time=CURRENT_TIMESTAMP WHERE id=#{groupId} AND NOT EXISTS (SELECT 1 FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE')")
+    @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE' ORDER BY joined_at,id LIMIT 1")
+    Long nextGroupLeader(long groupId);
+
+    @Update("UPDATE group_member SET role='LEADER',update_time=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
+    int promoteGroupLeader(@Param("groupId") long groupId,@Param("studentId") long studentId);
+
+    @Update("UPDATE group_table SET leader_student_id=#{studentId},update_time=CURRENT_TIMESTAMP WHERE id=#{groupId}")
+    int updateGroupLeader(@Param("groupId") long groupId,@Param("studentId") long studentId);
+
+    @Update("UPDATE group_table SET member_count=(SELECT COUNT(*) FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE'),current_members=(SELECT COUNT(*) FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE'),update_time=CURRENT_TIMESTAMP WHERE id=#{groupId}")
+    int syncGroupMemberCount(long groupId);
+
+    @Update("UPDATE group_table SET team_status='DISSOLVED',leader_student_id=NULL,member_count=0,current_members=0,update_time=CURRENT_TIMESTAMP WHERE id=#{groupId} AND NOT EXISTS (SELECT 1 FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE')")
     int dissolveEmptyGroup(long groupId);
 
     @Select("SELECT standard_group_size FROM assignment WHERE id=#{assignmentId} AND status IN ('PUBLISHED','CLOSED')")
     Integer studentAssignmentGroupSize(long assignmentId);
 
-    @Select("SELECT COUNT(*) + 1 FROM group_table WHERE assignment_id=#{assignmentId} AND team_status NOT IN ('DISSOLVED','ARCHIVED')")
+    @Select("""
+            SELECT COALESCE(MAX(CAST(REGEXP_SUBSTR(name, '[0-9]+') AS UNSIGNED)), 0) + 1
+            FROM group_table WHERE assignment_id=#{assignmentId}
+            """)
     int nextGroupNo(long assignmentId);
 
-    @Insert("INSERT INTO group_table(name,course_id,assignment_id,leader_student_id,status,team_status,max_members,join_method,create_time,update_time) VALUES(#{name},#{courseId},#{assignmentId},#{studentId},1,'FORMING',#{maxMembers},'FREE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+    @Select("""
+            SELECT id,name FROM group_table
+            WHERE assignment_id=#{assignmentId} AND team_status='DISSOLVED'
+            ORDER BY CAST(REGEXP_SUBSTR(name, '[0-9]+') AS UNSIGNED),id
+            LIMIT 1 FOR UPDATE
+            """)
+    Map<String,Object> reusableStudentGroup(long assignmentId);
+
+    @Update("""
+            UPDATE group_table SET leader_student_id=#{studentId},member_count=1,current_members=1,
+              status=1,team_status='FORMING',max_members=#{maxMembers},join_method='FREE',update_time=CURRENT_TIMESTAMP
+            WHERE id=#{groupId} AND team_status='DISSOLVED'
+            """)
+    int reactivateStudentGroup(@Param("groupId") long groupId,@Param("studentId") long studentId,
+                               @Param("maxMembers") int maxMembers);
+
+    @Insert("INSERT INTO group_table(name,course_id,assignment_id,leader_student_id,member_count,current_members,status,team_status,max_members,join_method,create_time,update_time) VALUES(#{name},#{courseId},#{assignmentId},#{studentId},1,1,1,'FORMING',#{maxMembers},'FREE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
     int insertStudentGroup(@Param("name") String name,@Param("courseId") long courseId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId,@Param("maxMembers") int maxMembers);
 
     @Select("SELECT LAST_INSERT_ID()") long lastGroupId();
 
     @Insert("INSERT INTO group_member(group_id,assignment_id,student_id,role,status,joined_at) VALUES(#{groupId},#{assignmentId},#{studentId},'LEADER','ACTIVE',CURRENT_TIMESTAMP)")
     int insertStudentLeader(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+
+    @Insert("""
+            INSERT INTO group_member(group_id,assignment_id,student_id,role,status,joined_at)
+            VALUES(#{groupId},#{assignmentId},#{studentId},'LEADER','ACTIVE',CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE role='LEADER',status='ACTIVE',joined_at=CURRENT_TIMESTAMP,
+              left_time=NULL,update_time=CURRENT_TIMESTAMP
+            """)
+    int upsertStudentLeader(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,
+                            @Param("studentId") long studentId);
 
     @Select("SELECT g.id,g.course_id AS courseId,g.max_members AS maxMembers FROM group_table g WHERE g.assignment_id=#{assignmentId} AND g.name=#{name} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')")
     Map<String,Object> findStudentGroup(@Param("assignmentId") long assignmentId,@Param("name") String name);
@@ -346,6 +398,9 @@ public interface TeachingMapper {
 
     @Insert("INSERT INTO group_member(group_id,assignment_id,student_id,role,status,joined_at) VALUES(#{groupId},#{assignmentId},#{studentId},'MEMBER','ACTIVE',CURRENT_TIMESTAMP)")
     int joinStudentGroup(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+
+    @Update("UPDATE group_member SET role='MEMBER',status='ACTIVE',joined_at=CURRENT_TIMESTAMP,left_time=NULL,update_time=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND student_id=#{studentId} AND status='LEFT'")
+    int reactivateStudentGroupMember(@Param("groupId") long groupId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
 
     @Select("""
             SELECT COUNT(*) FROM group_member gm JOIN group_table g ON g.id=gm.group_id

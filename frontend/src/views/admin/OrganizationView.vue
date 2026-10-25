@@ -126,28 +126,28 @@
               <el-option label="学生" value="ROLE_STUDENT" />
             </el-select>
           </el-form-item>
-          <el-form-item label="账号" prop="username">
-            <el-input v-model.trim="accountForm.username" :disabled="Boolean(editingId)" />
+          <el-form-item :label="accountForm.role === 'ROLE_TEACHER' ? '工号（登录账号）' : '学号（登录账号）'" prop="username">
+            <el-input v-model.trim="accountForm.username" :disabled="Boolean(editingId)" maxlength="20" />
           </el-form-item>
           <el-form-item label="姓名" prop="name">
             <el-input v-model.trim="accountForm.name" />
           </el-form-item>
-          <el-form-item label="院系">
-            <el-select v-model="accountForm.departmentId" clearable filterable @change="clearMajorAndClass">
+          <el-form-item label="所属学院" prop="departmentId">
+            <el-select v-model="accountForm.departmentId" filterable @change="clearMajorAndClass">
               <el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="专业">
-            <el-select v-model="accountForm.majorId" clearable filterable @change="accountForm.classId = null">
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="专业" prop="majorId">
+            <el-select v-model="accountForm.majorId" filterable :disabled="!accountForm.departmentId" @change="accountForm.classId = null">
               <el-option v-for="item in availableMajors" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级">
-            <el-select v-model="accountForm.classId" clearable filterable>
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级" prop="classId">
+            <el-select v-model="accountForm.classId" filterable :disabled="!accountForm.majorId">
               <el-option v-for="item in availableClasses" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="年级">
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="年级" prop="grade">
             <el-input-number v-model="accountForm.grade" :min="2000" :max="2100" controls-position="right" />
           </el-form-item>
         </div>
@@ -165,7 +165,7 @@
       :close-on-click-modal="false"
     >
       <el-alert
-        title="临时密码仅在本次创建结果中返回，请立即安全交付给用户。用户首次登录后必须修改密码。"
+        title="初始密码为 ABC 加登录账号，请安全交付给用户。用户首次登录后必须修改密码。"
         type="warning"
         :closable="false"
         show-icon
@@ -191,7 +191,7 @@
       @closed="resetImportDialog"
     >
       <el-alert
-        title="文件必须为 UTF-8 编码的 CSV，大小不超过 2MB，单次最多 5000 行。空白初始密码将由系统自动生成。"
+        title="文件必须为 UTF-8 编码的 CSV，大小不超过 2MB，单次最多 5000 行。初始密码留空时使用 ABC 加登录账号。"
         type="info"
         :closable="false"
         show-icon
@@ -334,8 +334,12 @@ const accountForm = reactive({
 })
 const accountRules = {
   role: [{ required: true, message: '请选择角色', trigger: 'change' }],
-  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
-  name: [{ required: true, message: '请输入姓名', trigger: 'blur' }]
+  username: [{ required: true, message: '请输入工号或学号', trigger: 'blur' }],
+  name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  departmentId: [{ required: true, message: '请选择所属学院', trigger: 'change' }],
+  majorId: [{ required: true, message: '请选择专业', trigger: 'change' }],
+  classId: [{ required: true, message: '请选择班级', trigger: 'change' }],
+  grade: [{ required: true, message: '请选择年级', trigger: 'change' }]
 }
 
 const departments = computed(() => Array.isArray(overview.value.departments) ? overview.value.departments : [])

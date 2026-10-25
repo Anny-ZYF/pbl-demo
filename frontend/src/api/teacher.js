@@ -1,6 +1,7 @@
 import http from './http'
 
 export const getCourses = () => http.get('/teacher/courses')
+export const createCourse = (data) => http.post('/teacher/courses', data)
 export const getAssignments = (courseId) => http.get(`/teacher/courses/${courseId}/assignments`)
 export const createAssignment = (courseId, data) => http.post(`/teacher/courses/${courseId}/assignments`, data)
 export const publishAssignment = (assignmentId) => http.post(`/teacher/assignments/${assignmentId}/publish`)

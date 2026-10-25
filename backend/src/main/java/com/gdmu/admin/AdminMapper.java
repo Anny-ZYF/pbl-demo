@@ -97,6 +97,18 @@ public interface AdminMapper {
     long accountCount(@Param("role") String role, @Param("status") Integer status,
                       @Param("keyword") String keyword);
 
+    @Select("SELECT COUNT(*) FROM user_account_view WHERE username=#{username}")
+    int accountUsernameCount(String username);
+
+    @Select("SELECT COUNT(*) FROM department WHERE id=#{departmentId} AND status='ACTIVE'")
+    int activeDepartment(long departmentId);
+
+    @Select("SELECT COUNT(*) FROM major WHERE id=#{majorId} AND department_id=#{departmentId} AND status='ACTIVE'")
+    int activeMajorInDepartment(@Param("majorId") long majorId, @Param("departmentId") long departmentId);
+
+    @Select("SELECT COUNT(*) FROM `class` WHERE id=#{classId} AND major_id=#{majorId} AND status='ACTIVE'")
+    int activeClassInMajor(@Param("classId") long classId, @Param("majorId") long majorId);
+
     @Insert("""
             INSERT INTO admin_users(username,password,display_name,status,role,must_change_password,create_time,update_time)
             VALUES(#{username},#{passwordHash},#{name},1,'ROLE_ADMIN',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)

@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Size;
 
 public record AccountCreateRequest(
         @NotBlank String role,
-        @NotBlank @Size(max = 50) String username,
+        @NotBlank @Size(max = 20) String username,
         @JsonAlias("name") @NotBlank @Size(max = 50) String displayName,
         @Pattern(regexp = "^$|^(?=.*[A-Za-z])(?=.*\\d).{8,64}$", message = "初始密码需为8-64位且包含字母和数字")
         String initialPassword,

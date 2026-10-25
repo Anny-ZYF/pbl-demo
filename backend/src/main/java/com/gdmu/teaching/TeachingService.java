@@ -30,6 +30,22 @@ public class TeachingService {
         return mapper.teacherCourses(teacher.id());
     }
 
+    @Transactional
+    public Map<String, Object> createCourse(UserPrincipal teacher, CourseCreateRequest request) {
+        if (request.beginDate() != null && request.endDate() != null) {
+            require(!request.endDate().isBefore(request.beginDate()), HttpStatus.BAD_REQUEST, "课程结束日期不能早于开始日期");
+        }
+        try {
+            mapper.insertCourse(teacher.id(), request);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(HttpStatus.CONFLICT, "课程代码已存在，请更换后重试");
+        }
+        long courseId = mapper.lastCourseId();
+        auditService.record(teacher, "COURSE_CREATED", "COURSE", courseId,
+                Map.of("name", request.name(), "term", request.term() == null ? "" : request.term()));
+        return Map.of("id", courseId, "name", request.name(), "status", "ACTIVE");
+    }
+
     public List<Map<String, Object>> teacherAssignments(UserPrincipal teacher, long courseId) {
         require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
         return mapper.teacherAssignments(courseId, teacher.id());
@@ -193,8 +209,19 @@ public class TeachingService {
         require(publishedAt != null && LocalDateTime.now().isBefore(publishedAt.plusDays(2)), HttpStatus.CONFLICT, "组队期已结束，小组已经锁定");
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.CONFLICT, "当前没有加入小组");
+        String role = mapper.activeGroupMemberRole(groupId, student.id());
         require(mapper.leaveStudentGroup(groupId, student.id()) == 1, HttpStatus.CONFLICT, "退出小组失败");
-        mapper.dissolveEmptyGroup(groupId);
+        if (mapper.activeGroupMemberCount(groupId) == 0) {
+            mapper.dissolveEmptyGroup(groupId);
+        } else {
+            if ("LEADER".equals(role)) {
+                Long nextLeader = mapper.nextGroupLeader(groupId);
+                require(nextLeader != null && mapper.promoteGroupLeader(groupId, nextLeader) == 1,
+                        HttpStatus.CONFLICT, "小组队长转让失败");
+                mapper.updateGroupLeader(groupId, nextLeader);
+            }
+            mapper.syncGroupMemberCount(groupId);
+        }
     }
 
     @Transactional
@@ -202,8 +229,17 @@ public class TeachingService {
         Long courseId = mapper.assignmentCourseForStudent(assignmentId, student.id());
         Integer standard = mapper.studentAssignmentGroupSize(assignmentId);
         require(courseId != null && standard != null, HttpStatus.NOT_FOUND, "作业不存在或未发布");
-        int no = mapper.nextGroupNo(assignmentId);
+        require(mapper.studentGroup(assignmentId, student.id()) == null, HttpStatus.CONFLICT, "你已经加入该作业的小组");
         int max = standard + 1;
+        Map<String,Object> reusable = mapper.reusableStudentGroup(assignmentId);
+        if (reusable != null) {
+            long groupId = ((Number) reusable.get("id")).longValue();
+            require(mapper.reactivateStudentGroup(groupId, student.id(), max) == 1,
+                    HttpStatus.CONFLICT, "小组已被其他同学恢复，请重试");
+            mapper.upsertStudentLeader(groupId, assignmentId, student.id());
+            return Map.of("id", groupId, "name", reusable.get("name"), "maxMembers", max);
+        }
+        int no = mapper.nextGroupNo(assignmentId);
         mapper.insertStudentGroup("第" + no + "组", courseId, assignmentId, student.id(), max);
         long groupId = mapper.lastGroupId(); mapper.insertStudentLeader(groupId, assignmentId, student.id());
         return Map.of("id", groupId, "name", "第" + no + "组", "maxMembers", max);
@@ -217,7 +253,11 @@ public class TeachingService {
         require(group != null, HttpStatus.NOT_FOUND, "小组不存在");
         require(mapper.studentGroup(assignmentId, student.id()) == null, HttpStatus.CONFLICT, "你已经加入该作业的小组");
         require(mapper.activeGroupMemberCount(((Number) group.get("id")).longValue()) < ((Number) group.get("maxMembers")).intValue(), HttpStatus.CONFLICT, "小组人数已满");
-        mapper.joinStudentGroup(((Number) group.get("id")).longValue(), assignmentId, student.id());
+        long groupId = ((Number) group.get("id")).longValue();
+        if (mapper.reactivateStudentGroupMember(groupId, assignmentId, student.id()) == 0) {
+            mapper.joinStudentGroup(groupId, assignmentId, student.id());
+        }
+        mapper.syncGroupMemberCount(groupId);
     }
 
     public List<Map<String, Object>> studentGroupMembers(UserPrincipal student, long groupId) {

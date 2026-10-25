@@ -1269,6 +1269,33 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": ["Teacher"],
+        "summary": "创建课程",
+        "security": [{"bearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CourseCreateRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "课程创建成功",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ApiResponseCourseCreateResult"}
+              }
+            }
+          },
+          "400": {"description": "请求参数错误"},
+          "401": {"description": "未认证"},
+          "403": {"description": "无权限"},
+          "409": {"description": "课程代码已存在"}
+        }
       }
     },
     "/api/v1/teacher/courses/{courseId}/students": {
@@ -2135,7 +2162,8 @@
           },
           "departmentId": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "教师和学生必填；必须为启用学院"
           },
           "majorId": {
             "type": "integer",
@@ -2147,7 +2175,9 @@
           },
           "grade": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 2100,
+            "minimum": 2000
           }
         },
         "required": [
@@ -2404,7 +2434,7 @@
         "properties": {
           "username": {
             "type": "string",
-            "maxLength": 50,
+            "maxLength": 20,
             "minLength": 0
           },
           "password": {
@@ -2493,7 +2523,8 @@
           },
           "departmentId": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "教师和学生必填；必须为启用学院"
           },
           "majorId": {
             "type": "integer",
@@ -2505,7 +2536,9 @@
           },
           "grade": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 2100,
+            "minimum": 2000
           }
         },
         "required": [
@@ -2593,6 +2626,35 @@
           "message": {
             "type": "string"
           }
+        }
+      },
+      "CourseCreateRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "code": {"type": "string", "maxLength": 50},
+          "name": {"type": "string", "maxLength": 100},
+          "term": {"type": "string", "maxLength": 32},
+          "grade": {"type": "string", "maxLength": 4},
+          "beginDate": {"type": "string", "format": "date"},
+          "endDate": {"type": "string", "format": "date"}
+        }
+      },
+      "CourseCreateResult": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "name": {"type": "string"},
+          "status": {"type": "string", "example": "ACTIVE"}
+        }
+      },
+      "ApiResponseCourseCreateResult": {
+        "type": "object",
+        "properties": {
+          "code": {"type": "integer", "format": "int32"},
+          "message": {"type": "string"},
+          "data": {"$ref": "#/components/schemas/CourseCreateResult"},
+          "requestId": {"type": "string"}
         }
       },
       "ApiResponseListMapStringObject": {
