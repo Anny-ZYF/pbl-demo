@@ -59,6 +59,12 @@ const routes = [
         name: 'admin-audit-logs',
         component: () => import('@/views/admin/AuditLogView.vue'),
         meta: { title: '审计日志' }
+      },
+      {
+        path: 'profile',
+        name: 'admin-profile',
+        component: () => import('@/views/ProfileView.vue'),
+        meta: { title: '个人中心' }
       }
     ]
   },
@@ -116,6 +122,12 @@ const routes = [
         name: 'teacher-dashboard',
         component: () => import('@/views/teacher/TeacherDashboardView.vue'),
         meta: { title: '教师工作台' }
+      },
+      {
+        path: 'profile',
+        name: 'teacher-profile',
+        component: () => import('@/views/ProfileView.vue'),
+        meta: { title: '个人中心' }
       }
     ]
   },
@@ -155,6 +167,12 @@ const routes = [
         name: 'student-scores',
         component: () => import('@/views/student/StudentScoresView.vue'),
         meta: { title: '我的成绩' }
+      },
+      {
+        path: 'profile',
+        name: 'student-profile',
+        component: () => import('@/views/ProfileView.vue'),
+        meta: { title: '个人中心' }
       }
     ]
   },
