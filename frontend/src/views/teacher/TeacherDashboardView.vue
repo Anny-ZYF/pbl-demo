@@ -34,7 +34,7 @@ const route = useRoute(); const router = useRouter(); const auth = useAuthStore(
 const courses = ref([]); const assignments = ref([]); const students = ref([]); const submissions = ref([]); const loading = ref(false); const errorMessage = ref('')
 const progressCanvas = ref(null); const submissionCanvas = ref(null); const gradeCanvas = ref(null); let progressChart; let submissionChart; let gradeChart
 const currentCourse = computed(() => courses.value.find((item) => String(item.id) === String(route.params.courseId)))
-const teacherName = computed(() => auth.user?.name || auth.user?.username || '教师')
+const teacherName = computed(() => auth.user?.displayName || auth.user?.name || '教师')
 const activeAssignments = computed(() => assignments.value.filter((item) => ['PUBLISHED', 'ACTIVE'].includes(item.status)).length)
 const pendingSubmissions = computed(() => assignments.value.reduce((sum, item) => sum + Number(item.submissionCount || 0), 0))
 const pendingAssignments = computed(() => assignments.value.filter((item) => Number(item.submissionCount || 0) > 0).slice(0, 3))

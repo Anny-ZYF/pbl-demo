@@ -63,6 +63,7 @@ public interface TeachingMapper {
 
     @Select("""
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
+                   m.name AS majorName,c.name AS className,
                    CASE WHEN g.id IS NULL THEN NULL ELSE CONCAT('Team', LPAD(COALESCE(CAST(REGEXP_SUBSTR(g.name, '[0-9]+') AS UNSIGNED), g.id), 2, '0')) END AS groupName,
                    sr.id AS scoringRunId,sr.status AS runStatus,COALESCE(r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
@@ -83,6 +84,8 @@ public interface TeachingMapper {
                         AND sub.is_latest=1 ORDER BY sub.id DESC LIMIT 1)) AS groupScore,
                    COALESCE(r.final_score, i.individual_final_score) AS individualFinalScore
             FROM student_course sc JOIN student_users s ON s.id=sc.student_id
+            LEFT JOIN major m ON m.id=s.major_id
+            LEFT JOIN `class` c ON c.id=s.class_id
             LEFT JOIN group_member gm ON gm.student_id=s.id AND gm.status='ACTIVE'
               AND gm.group_id IN (SELECT id FROM group_table WHERE assignment_id=#{assignmentId})
             LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=#{assignmentId}
