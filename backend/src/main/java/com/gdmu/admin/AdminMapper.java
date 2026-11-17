@@ -50,7 +50,7 @@ public interface AdminMapper {
     @Select("SELECT id,department_id AS departmentId,name,status FROM major ORDER BY department_id,name")
     List<Map<String, Object>> majors();
 
-    @Select("SELECT id,major_id AS majorId,name,grade,status FROM `class` ORDER BY major_id,grade,name")
+    @Select("SELECT id,department_id AS departmentId,name,grade,status FROM `class` ORDER BY department_id,grade,name")
     List<Map<String, Object>> classes();
 
     @Select("""
@@ -103,11 +103,45 @@ public interface AdminMapper {
     @Select("SELECT COUNT(*) FROM department WHERE id=#{departmentId} AND status='ACTIVE'")
     int activeDepartment(long departmentId);
 
+    @Insert("""
+            INSERT INTO department(name,status,create_time,update_time)
+            VALUES(#{name},'ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE status='ACTIVE',update_time=CURRENT_TIMESTAMP
+            """)
+    int upsertDepartment(String name);
+
+    @Select("SELECT id FROM department WHERE name=#{name} AND status='ACTIVE' LIMIT 1")
+    Long departmentIdByName(String name);
+
+    @Insert("""
+            INSERT INTO major(department_id,name,status,create_time,update_time)
+            VALUES(#{departmentId},#{name},'ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE status='ACTIVE',update_time=CURRENT_TIMESTAMP
+            """)
+    int upsertMajor(@Param("departmentId") long departmentId, @Param("name") String name);
+
+    @Select("SELECT id FROM major WHERE department_id=#{departmentId} AND name=#{name} AND status='ACTIVE' LIMIT 1")
+    Long majorIdByName(@Param("departmentId") long departmentId, @Param("name") String name);
+
+    @Insert("""
+            INSERT INTO `class`(department_id,major_id,name,grade,status,create_time,update_time)
+            VALUES(#{departmentId},NULL,#{name},NULL,'ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE status='ACTIVE',update_time=CURRENT_TIMESTAMP
+            """)
+    int upsertClass(@Param("departmentId") long departmentId, @Param("name") String name);
+
+    @Select("""
+            SELECT id FROM `class`
+            WHERE department_id=#{departmentId} AND name=#{name} AND status='ACTIVE'
+            ORDER BY grade IS NULL DESC,id LIMIT 1
+            """)
+    Long classIdByName(@Param("departmentId") long departmentId, @Param("name") String name);
+
     @Select("SELECT COUNT(*) FROM major WHERE id=#{majorId} AND department_id=#{departmentId} AND status='ACTIVE'")
     int activeMajorInDepartment(@Param("majorId") long majorId, @Param("departmentId") long departmentId);
 
-    @Select("SELECT COUNT(*) FROM `class` WHERE id=#{classId} AND major_id=#{majorId} AND status='ACTIVE'")
-    int activeClassInMajor(@Param("classId") long classId, @Param("majorId") long majorId);
+    @Select("SELECT COUNT(*) FROM `class` WHERE id=#{classId} AND department_id=#{departmentId} AND status='ACTIVE'")
+    int activeClassInDepartment(@Param("classId") long classId, @Param("departmentId") long departmentId);
 
     @Insert("""
             INSERT INTO admin_users(username,password,display_name,status,role,must_change_password,create_time,update_time)

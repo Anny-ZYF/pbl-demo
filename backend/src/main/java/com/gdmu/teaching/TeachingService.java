@@ -275,7 +275,10 @@ public class TeachingService {
         require(publishedAt != null && !LocalDateTime.now().isBefore(publishedAt.plusDays(2)), HttpStatus.CONFLICT, "当前处于组队期，暂不可提交作业");
         require(deadline != null, HttpStatus.CONFLICT, "作业未发布");
         require(!LocalDateTime.now().isAfter(deadline), HttpStatus.CONFLICT, "作业已截止");
-        saveSubmissionContributions(student, assignmentId, groupId, request);
+        if (request.contributionScores() != null
+                && mapper.usableWorkloadSetCount(groupId, assignmentId) == 0) {
+            saveSubmissionContributions(student, assignmentId, groupId, request);
+        }
         require((request.content() != null && !request.content().isBlank())
                         || (request.filePath() != null && !request.filePath().isBlank())
                         || (request.attachments() != null && !request.attachments().isEmpty()),
@@ -311,8 +314,14 @@ public class TeachingService {
 
     private void saveSubmissionContributions(UserPrincipal student, long assignmentId, long groupId,
                                              StudentSubmissionRequest request) {
-        List<Long> members = mapper.activeGroupStudentIds(groupId, assignmentId);
         Map<Long, java.math.BigDecimal> requested = request.contributionScores();
+        String role = mapper.activeGroupMemberRole(groupId, student.id());
+        if (!"LEADER".equals(role)) {
+            require(requested == null || requested.isEmpty(), HttpStatus.FORBIDDEN,
+                    "只有小组组长可以编辑贡献度");
+            return;
+        }
+        List<Long> members = mapper.activeGroupStudentIds(groupId, assignmentId);
         require(requested != null && requested.keySet().equals(new java.util.LinkedHashSet<>(members)),
                 HttpStatus.BAD_REQUEST, "请为全部小组成员填写贡献值");
         java.math.BigDecimal total = java.math.BigDecimal.ZERO;

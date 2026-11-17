@@ -114,6 +114,7 @@ public class ScoringService {
         long setId = ((Number) summary.get("id")).longValue();
         Map<String, Object> response = new LinkedHashMap<>(summary);
         response.put("items", mapper.workloadItems(setId));
+        response.put("objections", mapper.workloadObjections(setId));
         return response;
     }
 
@@ -136,6 +137,8 @@ public class ScoringService {
                 HttpStatus.BAD_REQUEST, "提出异议时必须填写原因");
         require(mapper.lockWorkloadSetForConfirmation(setId, student.id()) != null, HttpStatus.CONFLICT,
                 "工作量分配不存在、已锁定或不属于当前学生");
+        require(!status.equals("CONFIRMED") || mapper.objectedCount(setId) == 0, HttpStatus.CONFLICT,
+                "该分工版本已有成员提出异议，需由组长重新提交后再确认");
         require(mapper.confirmWorkload(setId, student.id(), status, request.comment()) == 1,
                 HttpStatus.CONFLICT, "工作量分配不存在、已锁定或不属于当前学生");
         if (status.equals("CONFIRMED") && mapper.unconfirmedCount(setId) == 0) {

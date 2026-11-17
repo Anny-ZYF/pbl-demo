@@ -73,17 +73,14 @@ public class AdminService {
                 .<Map<String, Object>>map(row -> new LinkedHashMap<>(row)).toList();
         List<Map<String, Object>> classes = mapper.classes().stream()
                 .<Map<String, Object>>map(row -> new LinkedHashMap<>(row)).toList();
-        Map<Long, List<Map<String, Object>>> classesByMajor = classes.stream().collect(java.util.stream.Collectors.groupingBy(
-                row -> number(row.get("majorId")), LinkedHashMap::new, java.util.stream.Collectors.toList()));
-        for (Map<String, Object> major : majors) {
-            long majorId = ((Number) major.get("id")).longValue();
-            major.put("classes", classesByMajor.getOrDefault(majorId, List.of()));
-        }
+        Map<Long, List<Map<String, Object>>> classesByDepartment = classes.stream().collect(java.util.stream.Collectors.groupingBy(
+                row -> number(row.get("departmentId")), LinkedHashMap::new, java.util.stream.Collectors.toList()));
         Map<Long, List<Map<String, Object>>> majorsByDepartment = majors.stream().collect(java.util.stream.Collectors.groupingBy(
                 row -> number(row.get("departmentId")), LinkedHashMap::new, java.util.stream.Collectors.toList()));
         for (Map<String, Object> department : departments) {
             long departmentId = ((Number) department.get("id")).longValue();
             department.put("majors", majorsByDepartment.getOrDefault(departmentId, List.of()));
+            department.put("classes", classesByDepartment.getOrDefault(departmentId, List.of()));
         }
         response.put("accountCount", number(response.get("activeTeacherCount")) + number(response.get("activeStudentCount")));
         response.put("departments", departments);
@@ -105,7 +102,8 @@ public class AdminService {
         require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "管理员只能创建教师或学生账号");
         String username = request.username().trim();
         require(mapper.accountUsernameCount(username) == 0, HttpStatus.CONFLICT, "登录账号已被使用");
-        validateOrganization(role, request.departmentId(), request.majorId(), request.classId(), request.grade());
+        Long classId = validateOrganization(role, request.departmentId(), request.majorId(), request.classId(),
+                request.classNumber(), request.grade());
         String temporaryPassword = request.initialPassword() == null || request.initialPassword().isBlank()
                 ? generatedPassword(username) : request.initialPassword();
         String hash = passwordEncoder.encode(temporaryPassword);
@@ -113,7 +111,7 @@ public class AdminService {
             switch (role) {
                 case TEACHER -> mapper.insertTeacher(username, hash, request.displayName().trim(), request.departmentId());
                 case STUDENT -> mapper.insertStudent(username, hash, request.displayName().trim(),
-                        request.majorId(), request.classId(), request.grade());
+                        request.majorId(), classId, request.grade());
                 default -> throw new BusinessException(HttpStatus.BAD_REQUEST, "不支持的账号角色");
             }
         } catch (DuplicateKeyException ex) {
@@ -129,11 +127,12 @@ public class AdminService {
     public void updateAccount(UserPrincipal admin, long id, AccountUpdateRequest request) {
         Role role = Role.parse(request.role());
         require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "只允许维护教师或学生账号");
-        validateOrganization(role, request.departmentId(), request.majorId(), request.classId(), request.grade());
+        Long classId = validateOrganization(role, request.departmentId(), request.majorId(), request.classId(),
+                request.classNumber(), request.grade());
         int changed = switch (role) {
             case ADMIN -> mapper.updateAdmin(id, request.displayName().trim());
             case TEACHER -> mapper.updateTeacher(id, request.displayName().trim(), request.departmentId());
-            case STUDENT -> mapper.updateStudent(id, request.displayName().trim(), request.majorId(), request.classId(), request.grade());
+            case STUDENT -> mapper.updateStudent(id, request.displayName().trim(), request.majorId(), classId, request.grade());
         };
         requireOne(changed, "账号不存在");
         auditService.record(admin, "ACCOUNT_UPDATED", "ACCOUNT", role + ":" + id, Map.of("role", role.name()));
@@ -351,18 +350,43 @@ public class AdminService {
         }
     }
 
-    private void validateOrganization(Role role, Long departmentId, Long majorId, Long classId, Integer grade) {
+    /**
+     * Class numbers are numbered once per department; a student's major and
+     * class are independent dimensions under the same department. Returns the
+     * resolved class id so that the caller never writes an unverified id.
+     */
+    private Long validateOrganization(Role role, Long departmentId, Long majorId, Long classId,
+                                      Integer classNumber, Integer grade) {
         require(departmentId != null, HttpStatus.BAD_REQUEST, role == Role.TEACHER ? "教师所属学院不能为空" : "学生所属学院不能为空");
         require(mapper.activeDepartment(departmentId) == 1, HttpStatus.BAD_REQUEST, "所属学院不存在或已停用");
         if (role == Role.TEACHER) {
-            require(majorId == null && classId == null && grade == null, HttpStatus.BAD_REQUEST, "教师账号不能设置专业、班级或年级");
-            return;
+            require(majorId == null && classId == null && classNumber == null && grade == null,
+                    HttpStatus.BAD_REQUEST, "教师账号不能设置专业、班级或年级");
+            return null;
         }
         require(majorId != null, HttpStatus.BAD_REQUEST, "学生专业不能为空");
-        require(classId != null, HttpStatus.BAD_REQUEST, "学生班级不能为空");
         require(grade != null && grade >= 2000 && grade <= 2100, HttpStatus.BAD_REQUEST, "学生年级必须在2000至2100之间");
         require(mapper.activeMajorInDepartment(majorId, departmentId) == 1, HttpStatus.BAD_REQUEST, "专业不属于所选学院或已停用");
-        require(mapper.activeClassInMajor(classId, majorId) == 1, HttpStatus.BAD_REQUEST, "班级不属于所选专业或已停用");
+        return resolveClassId(departmentId, classId, classNumber);
+    }
+
+    /** Reuse an existing department-scoped class number, or create it on demand. */
+    private Long resolveClassId(Long departmentId, Long classId, Integer classNumber) {
+        require(classId != null || classNumber != null, HttpStatus.BAD_REQUEST, "学生班级不能为空");
+        if (classNumber == null) {
+            require(mapper.activeClassInDepartment(classId, departmentId) == 1, HttpStatus.BAD_REQUEST,
+                    "班级不属于所选学院或已停用");
+            return classId;
+        }
+        require(classNumber >= 1 && classNumber <= 9999, HttpStatus.BAD_REQUEST, "班级号必须是1至9999之间的整数");
+        String name = String.valueOf(classNumber);
+        Long resolved = mapper.classIdByName(departmentId, name);
+        if (resolved == null) {
+            mapper.upsertClass(departmentId, name);
+            resolved = mapper.classIdByName(departmentId, name);
+        }
+        require(resolved != null, HttpStatus.CONFLICT, "班级创建失败，请稍后重试");
+        return resolved;
     }
 
     private String generatedPassword(String username) {

@@ -138,14 +138,19 @@
             </el-select>
           </el-form-item>
           <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="专业" prop="majorId">
-            <el-select v-model="accountForm.majorId" filterable :disabled="!accountForm.departmentId" @change="accountForm.classId = null">
+            <el-select v-model="accountForm.majorId" filterable :disabled="!accountForm.departmentId">
               <el-option v-for="item in availableMajors" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级" prop="classId">
-            <el-select v-model="accountForm.classId" filterable :disabled="!accountForm.majorId">
-              <el-option v-for="item in availableClasses" :key="item.id" :label="item.name" :value="item.id" />
-            </el-select>
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级号（学院内统一编号）" prop="classNumber">
+            <el-input-number
+              v-model="accountForm.classNumber"
+              :min="1"
+              :max="9999"
+              :step="1"
+              :disabled="!accountForm.departmentId"
+              controls-position="right"
+            />
           </el-form-item>
           <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="年级" prop="grade">
             <el-input-number v-model="accountForm.grade" :min="2000" :max="2100" controls-position="right" />
@@ -199,26 +204,37 @@
       />
 
       <div v-if="!importReport" class="import-guide">
-        <div class="import-guide__title">
-          <span>固定表头（顺序不可变）</span>
-          <el-button link type="primary" @click="downloadImportTemplate">下载 UTF-8 模板</el-button>
+        <div class="import-role-picker">
+          <strong>第一步：选择导入账号类型</strong>
+          <el-radio-group v-model="importRole" @change="handleImportRoleChange">
+            <el-radio-button value="ROLE_STUDENT">学生账号</el-radio-button>
+            <el-radio-button value="ROLE_TEACHER">教师账号</el-radio-button>
+          </el-radio-group>
         </div>
-        <code>role,username,displayName,departmentId,majorId,classId,grade,initialPassword</code>
-        <p>角色填写 ROLE_TEACHER 或 ROLE_STUDENT；教师填写 departmentId，学生填写 majorId、classId 和 grade。</p>
-        <el-upload
-          ref="importUploadRef"
-          v-model:file-list="importFileList"
-          drag
-          :auto-upload="false"
-          :limit="1"
-          accept=".csv,text/csv"
-          :on-change="handleImportChange"
-          :on-exceed="handleImportExceed"
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">将 CSV 文件拖到此处，或<em>点击选择</em></div>
-          <template #tip><div class="el-upload__tip">选中文件后点击“开始导入”，系统会逐行返回结果。</div></template>
-        </el-upload>
+
+        <template v-if="importRole">
+          <div class="import-guide__title">
+            <span>第二步：下载并填写{{ importRoleLabel }}模板</span>
+            <el-button link type="primary" @click="downloadImportTemplate">下载{{ importRoleLabel }}模板</el-button>
+          </div>
+          <code>role,username,displayName,department,major,class,grade,initialPassword</code>
+          <p>{{ importTemplateHint }}</p>
+          <el-upload
+            ref="importUploadRef"
+            v-model:file-list="importFileList"
+            drag
+            :auto-upload="false"
+            :limit="1"
+            accept=".csv,text/csv"
+            :on-change="handleImportChange"
+            :on-exceed="handleImportExceed"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">将{{ importRoleLabel }} CSV 文件拖到此处，或<em>点击选择</em></div>
+            <template #tip><div class="el-upload__tip">选中文件后点击“开始导入”，系统会逐行返回结果。</div></template>
+          </el-upload>
+        </template>
+        <el-empty v-else description="请先选择要导入学生账号还是教师账号" :image-size="72" />
       </div>
 
       <div v-else class="import-report">
@@ -255,7 +271,7 @@
       <template #footer>
         <el-button @click="importDialogVisible = false">关闭</el-button>
         <el-button v-if="importReport" @click="prepareAnotherImport">导入另一批</el-button>
-        <el-button v-else type="primary" :loading="importing" :disabled="!importFileList.length" @click="submitImport">
+        <el-button v-else type="primary" :loading="importing" :disabled="!importRole || !importFileList.length" @click="submitImport">
           开始导入
         </el-button>
       </template>
@@ -281,6 +297,8 @@ import {
   ElMessageBox,
   ElOption,
   ElPagination,
+  ElRadioButton,
+  ElRadioGroup,
   ElSelect,
   ElTable,
   ElTableColumn,
@@ -319,17 +337,22 @@ const accountFormRef = ref()
 const credentialVisible = ref(false)
 const createdCredential = ref({})
 const importDialogVisible = ref(false)
+const importRole = ref('')
 const importUploadRef = ref()
 const importFileList = ref([])
 const importReport = ref(null)
 const importing = ref(false)
+const importRoleLabel = computed(() => importRole.value === 'ROLE_TEACHER' ? '教师账号' : '学生账号')
+const importTemplateHint = computed(() => importRole.value === 'ROLE_TEACHER'
+  ? '教师模板直接填写工号、姓名和学院名称；专业、班级、年级请留空。新学院会自动创建，初始密码留空时为 ABC+工号。'
+  : '学生模板直接填写学号、姓名、学院名称、专业名称、班级号和年级。不存在的学院、专业或班级会自动创建，初始密码留空时为 ABC+学号。')
 const accountForm = reactive({
   role: 'ROLE_STUDENT',
   username: '',
   name: '',
   departmentId: null,
   majorId: null,
-  classId: null,
+  classNumber: null,
   grade: null
 })
 const accountRules = {
@@ -338,8 +361,25 @@ const accountRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   departmentId: [{ required: true, message: '请选择所属学院', trigger: 'change' }],
   majorId: [{ required: true, message: '请选择专业', trigger: 'change' }],
-  classId: [{ required: true, message: '请选择班级', trigger: 'change' }],
+  classNumber: [
+    { required: true, message: '请输入学院内的班级号', trigger: 'change' },
+    {
+      validator: (_rule, value, callback) => {
+        if (!Number.isInteger(value) || value < 1 || value > 9999) {
+          callback(new Error('班级号必须是 1~9999 的整数'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change'
+    }
+  ],
   grade: [{ required: true, message: '请选择年级', trigger: 'change' }]
+}
+
+function classNumberFromName(name) {
+  const value = Number(name)
+  return Number.isInteger(value) && value >= 1 && value <= 9999 ? value : null
 }
 
 const departments = computed(() => Array.isArray(overview.value.departments) ? overview.value.departments : [])
@@ -347,11 +387,6 @@ const availableMajors = computed(() => {
   const department = departments.value.find((item) => String(item.id) === String(accountForm.departmentId))
   return Array.isArray(department?.majors) ? department.majors : []
 })
-const availableClasses = computed(() => {
-  const major = availableMajors.value.find((item) => String(item.id) === String(accountForm.majorId))
-  return Array.isArray(major?.classes) ? major.classes : []
-})
-
 const organizationMetrics = computed(() => {
   const summary = overview.value.summary || overview.value
   return [
@@ -368,20 +403,22 @@ const organizationRows = computed(() => departments.value.map((department, depar
   code: department.code,
   typeLabel: '院系',
   memberCount: department.memberCount ?? department.accountCount,
-  children: (department.majors || []).map((major, majorIndex) => ({
-    treeKey: `major-${major.id ?? `${departmentIndex}-${majorIndex}`}`,
-    name: major.name,
-    code: major.code,
-    typeLabel: '专业',
-    memberCount: major.memberCount ?? major.studentCount,
-    children: (major.classes || []).map((classItem, classIndex) => ({
-      treeKey: `class-${classItem.id ?? `${departmentIndex}-${majorIndex}-${classIndex}`}`,
+  children: [
+    ...(department.majors || []).map((major, majorIndex) => ({
+      treeKey: `major-${major.id ?? `${departmentIndex}-${majorIndex}`}`,
+      name: major.name,
+      code: major.code,
+      typeLabel: '专业',
+      memberCount: major.memberCount ?? major.studentCount
+    })),
+    ...(department.classes || []).map((classItem, classIndex) => ({
+      treeKey: `class-${classItem.id ?? `${departmentIndex}-${classIndex}`}`,
       name: classItem.name,
       code: classItem.code,
       typeLabel: '班级',
       memberCount: classItem.memberCount ?? classItem.studentCount
     }))
-  }))
+  ]
 })))
 
 async function loadOverview() {
@@ -442,7 +479,7 @@ function resetAccountForm() {
     name: '',
     departmentId: null,
     majorId: null,
-    classId: null,
+    classNumber: null,
     grade: null
   })
   accountFormRef.value?.clearValidate()
@@ -462,7 +499,7 @@ function openEdit(row) {
     name: row.name || row.realName || '',
     departmentId: row.departmentId ?? null,
     majorId: row.majorId ?? null,
-    classId: row.classId ?? null,
+    classNumber: classNumberFromName(row.className),
     grade: row.grade ?? null
   })
   accountDialogVisible.value = true
@@ -475,7 +512,7 @@ function clearOrganizationSelection() {
 
 function clearMajorAndClass() {
   accountForm.majorId = null
-  accountForm.classId = null
+  accountForm.classNumber = null
 }
 
 async function saveAccount() {
@@ -483,13 +520,14 @@ async function saveAccount() {
   if (!valid) return
   savingAccount.value = true
   try {
+    const isStudent = accountForm.role === 'ROLE_STUDENT'
     const payload = {
       role: accountForm.role,
       displayName: accountForm.name,
       departmentId: accountForm.departmentId,
-      majorId: accountForm.majorId,
-      classId: accountForm.classId,
-      grade: accountForm.grade
+      majorId: isStudent ? accountForm.majorId : null,
+      classNumber: isStudent ? accountForm.classNumber : null,
+      grade: isStudent ? accountForm.grade : null
     }
     let created = null
     if (editingId.value) {
@@ -522,6 +560,12 @@ function resetImportDialog() {
   importFileList.value = []
   importReport.value = null
   importing.value = false
+  importRole.value = ''
+}
+
+function handleImportRoleChange() {
+  importUploadRef.value?.clearFiles()
+  importFileList.value = []
 }
 
 function prepareAnotherImport() {
@@ -547,32 +591,50 @@ function handleImportExceed() {
 }
 
 function downloadImportTemplate() {
-  const header = 'role,username,displayName,departmentId,majorId,classId,grade,initialPassword'
-  const examples = [
-    'ROLE_TEACHER,T2026001,示例教师,1,,,,',
-    'ROLE_STUDENT,20260101,示例学生,,1,1,2026,'
-  ]
+  const header = 'role,username,displayName,department,major,class,grade,initialPassword'
+  const examples = importRole.value === 'ROLE_TEACHER'
+    ? ['ROLE_TEACHER,T2026001,示例教师,生物医学工程学院,,,,']
+    : ['ROLE_STUDENT,20260101,示例学生,生物医学工程学院,智能科学与技术,1,2026,']
   const blob = new Blob([`\uFEFF${header}\r\n${examples.join('\r\n')}\r\n`], {
     type: 'text/csv;charset=utf-8'
   })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = 'account-import-template.csv'
+  anchor.download = importRole.value === 'ROLE_TEACHER'
+    ? 'teacher-account-import-template.csv'
+    : 'student-account-import-template.csv'
   anchor.click()
   URL.revokeObjectURL(url)
 }
 
 async function submitImport() {
+  if (!importRole.value) {
+    ElMessage.warning('请先选择账号类型')
+    return
+  }
   const file = importFileList.value[0]?.raw
   if (!file) {
     ElMessage.warning('请先选择 CSV 文件')
     return
   }
 
+  const content = (await file.text()).replace(/^\uFEFF/, '')
+  const lines = content.split(/\r?\n/)
+  const normalizedLines = lines.map((line, index) => {
+    if (index === 0 || !line.trim()) return line
+    const separatorIndex = line.indexOf(',')
+    return separatorIndex < 0 ? line : `${importRole.value}${line.slice(separatorIndex)}`
+  })
+  const normalizedFile = new File(
+    [`\uFEFF${normalizedLines.join('\r\n')}`],
+    file.name,
+    { type: 'text/csv;charset=utf-8' }
+  )
+
   importing.value = true
   try {
-    importReport.value = await importAccounts(file)
+    importReport.value = await importAccounts(normalizedFile)
     ElMessage.success(`导入完成：成功 ${importReport.value.successRows} 行，失败 ${importReport.value.failureRows} 行`)
     activeTab.value = 'accounts'
     await Promise.all([loadAccounts(), loadOverview()])
@@ -684,6 +746,19 @@ onMounted(reloadAll)
   white-space: nowrap;
 }
 
+.import-role-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding: 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #1e3a5f;
+}
+
 .import-guide > p,
 .report-hint {
   margin: 8px 0 16px;
@@ -757,6 +832,11 @@ onMounted(reloadAll)
 
   .import-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .import-role-picker {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

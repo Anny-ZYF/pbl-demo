@@ -289,7 +289,7 @@ public interface TeachingMapper {
     @Select("""
             SELECT a.id,a.title,a.description,a.deadline,a.published_at AS publishedAt,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,
-                   g.id AS groupId,g.name AS groupName,
+                   g.id AS groupId,g.name AS groupName,gm.role AS memberRole,
                    sub.content,sub.file_path AS filePath,sub.submit_note AS submitNote,
                    sub.status AS submissionStatus,sub.teacher_score AS teacherScore,
                    sub.teacher_comment AS teacherComment,
@@ -423,6 +423,9 @@ public interface TeachingMapper {
     List<Long> assignmentPartIds(long assignmentId);
     @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status='ACTIVE' ORDER BY student_id")
     List<Long> activeGroupStudentIds(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
+    @Select("SELECT COUNT(*) FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status IN ('LOCKED','PENDING_CONFIRMATION')")
+    int usableWorkloadSetCount(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
+
     @Select("SELECT COALESCE(MAX(version_no),0)+1 FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId}")
     int nextSubmissionWorkloadVersion(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
     @Update("UPDATE workload_set SET status='SUPERSEDED',updated_at=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status IN ('DRAFT','PENDING_CONFIRMATION')")

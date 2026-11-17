@@ -68,7 +68,7 @@ public interface ScoringMapper {
     @Select("""
             SELECT COUNT(*) FROM group_table
             WHERE id=#{groupId} AND assignment_id=#{assignmentId} AND leader_student_id=#{studentId}
-              AND team_status IN ('CONFIRMED','COMPLETED')
+              AND team_status NOT IN ('DISSOLVED','ARCHIVED')
             """)
     int studentLeadsGroup(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId,
                            @Param("studentId") long studentId);
@@ -158,6 +158,17 @@ public interface ScoringMapper {
             WHERE wc.workload_set_id=#{setId} ORDER BY s.student_user_id
             """)
     List<Map<String, Object>> workloadConfirmations(long setId);
+
+    @Select("SELECT COUNT(*) FROM workload_confirmation WHERE workload_set_id=#{setId} AND status='OBJECTED'")
+    int objectedCount(long setId);
+
+    @Select("""
+            SELECT wc.student_id AS studentId,s.name AS studentName,wc.comment,wc.confirmed_at AS confirmedAt
+            FROM workload_confirmation wc JOIN student_users s ON s.id=wc.student_id
+            WHERE wc.workload_set_id=#{setId} AND wc.status='OBJECTED'
+            ORDER BY wc.confirmed_at,wc.student_id
+            """)
+    List<Map<String, Object>> workloadObjections(long setId);
 
     @Select("""
             SELECT wi.assignment_part_id AS assignmentPartId,ap.part_name AS partName,wi.student_id AS studentId,

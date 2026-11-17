@@ -24,8 +24,8 @@ import java.util.UUID;
 
 @Service
 public class AccountImportService {
-    private static final List<String> HEADER = List.of("role", "username", "displayName", "departmentId",
-            "majorId", "classId", "grade", "initialPassword");
+    private static final List<String> HEADER = List.of("role", "username", "displayName", "department",
+            "major", "class", "grade", "initialPassword");
     private final AdminService adminService;
     private final AuditService auditService;
     private final AdminMapper mapper;
@@ -69,9 +69,7 @@ public class AccountImportService {
                 try {
                     List<String> cells = parseCsvLine(line);
                     if (cells.size() != HEADER.size()) throw new IllegalArgumentException("列数不正确");
-                    AccountCreateRequest request = new AccountCreateRequest(cells.get(0), cells.get(1), cells.get(2),
-                            cells.get(7), nullableLong(cells.get(3)), nullableLong(cells.get(4)), nullableLong(cells.get(5)),
-                            nullableInteger(cells.get(6)));
+                    AccountCreateRequest request = accountRequest(cells);
                     successes.add(new LinkedHashMap<>(adminService.createAccount(admin, request)));
                 } catch (RuntimeException ex) {
                     errors.add(new RowError(rowNumber, safeMessage(ex)));
@@ -124,8 +122,44 @@ public class AccountImportService {
         return cells;
     }
 
-    private Long nullableLong(String value) {
-        return value == null || value.isBlank() ? null : Long.valueOf(value);
+    private AccountCreateRequest accountRequest(List<String> cells) {
+        String role = cells.get(0).trim().toUpperCase();
+        if (!List.of("ROLE_TEACHER", "TEACHER", "ROLE_STUDENT", "STUDENT").contains(role)) {
+            throw new IllegalArgumentException("角色必须为教师或学生");
+        }
+        String departmentName = requiredName(cells.get(3), "所属学院");
+        mapper.upsertDepartment(departmentName);
+        Long departmentId = mapper.departmentIdByName(departmentName);
+        if (departmentId == null) throw new IllegalStateException("所属学院创建失败");
+
+        Long majorId = null;
+        Long classId = null;
+        if (role.equals("ROLE_STUDENT") || role.equals("STUDENT")) {
+            String majorName = requiredName(cells.get(4), "专业");
+            mapper.upsertMajor(departmentId, majorName);
+            majorId = mapper.majorIdByName(departmentId, majorName);
+            if (majorId == null) throw new IllegalStateException("专业创建失败");
+
+            String className = requiredName(cells.get(5), "班级");
+            classId = mapper.classIdByName(departmentId, className);
+            if (classId == null) {
+                mapper.upsertClass(departmentId, className);
+                classId = mapper.classIdByName(departmentId, className);
+            }
+            if (classId == null) throw new IllegalStateException("班级创建失败");
+        } else if (!cells.get(4).isBlank() || !cells.get(5).isBlank() || !cells.get(6).isBlank()) {
+            throw new IllegalArgumentException("教师账号不能填写专业、班级或年级");
+        }
+
+        return new AccountCreateRequest(role, cells.get(1), cells.get(2), cells.get(7),
+                departmentId, majorId, classId, nullableInteger(cells.get(6)));
+    }
+
+    private String requiredName(String value, String label) {
+        String name = value == null ? "" : value.trim();
+        if (name.isEmpty()) throw new IllegalArgumentException(label + "不能为空");
+        if (name.length() > 100) throw new IllegalArgumentException(label + "不能超过100个字符");
+        return name;
     }
 
     private Integer nullableInteger(String value) {

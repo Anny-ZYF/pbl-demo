@@ -207,6 +207,8 @@ Authorization: Bearer <accessToken>
 
 组织概况包含 `departmentCount`、`majorCount`、`classCount`、`activeTeacherCount`、`activeStudentCount`、`accountCount` 和：
 
+班级按**学院维度统一编号**。`departments[].majors` 与 `departments[].classes` 是同一学院下两个并列维度，班级不再挂在专业下；`classes[].name` 为学院内的班级号（如 `"7"`），同号班级在学院内唯一，不同专业的学生可以属于同一班号。
+
 ```json
 {
   "departments": [
@@ -215,15 +217,11 @@ Authorization: Bearer <accessToken>
       "name": "基础医学院",
       "status": 1,
       "majors": [
-        {
-          "id": 2,
-          "departmentId": 1,
-          "name": "临床医学",
-          "status": 1,
-          "classes": [
-            {"id": 3, "majorId": 2, "name": "临床1班", "grade": "2024", "status": 1}
-          ]
-        }
+        {"id": 2, "departmentId": 1, "name": "临床医学", "status": 1}
+      ],
+      "classes": [
+        {"id": 3, "departmentId": 1, "name": "1", "grade": null, "status": 1},
+        {"id": 4, "departmentId": 1, "name": "7", "grade": null, "status": 1}
       ]
     }
   ]
@@ -250,14 +248,16 @@ Authorization: Bearer <accessToken>
   "initialPassword": "Student2026",
   "departmentId": 1,
   "majorId": 2,
-  "classId": 3,
+  "classNumber": 7,
   "grade": 2024
 }
 ```
 
+`classNumber` 是**学院维度**的班级号（1–9999 的整数），与 `majorId` 互相独立：同号班级在该学院下唯一，不同专业的学生可以属于同一班号。服务端按 `(departmentId, classNumber)` 复用已有班级，不存在时自动创建并启用，因此班级号不预设上限、不固定在 1~30。`classId` 仍保留用于 CSV 导入与旧客户端；两者二选一，同时提供时以 `classNumber` 为准，且 `classId` 必须属于所选学院。
+
 - 管理员创建接口仅接受教师和学生角色，登录账号在所有角色之间必须唯一。
-- 教师必须填写姓名、工号和所属学院，不得携带专业、班级或年级。
-- 学生必须填写姓名、学号、所属学院、专业、班级和年级；专业必须属于所选学院，班级必须属于所选专业，且相关组织必须处于启用状态。
+- 教师必须填写姓名、工号和所属学院，不得携带专业、班级、班级号或年级。
+- 学生必须填写姓名、学号、所属学院、专业、班级号和年级；专业必须属于所选学院，班级号必须是 1–9999 的整数，相关学院、专业、班级均须处于启用状态。
 - 工号/学号最长 20；年级范围为 2000–2100。未提供初始密码时使用 `ABC` 加登录账号，首次登录必须修改。
 
 - `displayName` 也接受别名 `name`；最长 50。
@@ -265,7 +265,7 @@ Authorization: Bearer <accessToken>
 - 省略或留空密码时，初始密码为 `ABC` 加清理后的登录账号，例如账号 `20260101` 对应 `ABC20260101`。成功响应为 `{username,role,temporaryPassword,mustChangePassword:true}`；初始密码不得写入前端日志。
 - `role` 仅接受教师或学生。
 
-更新请求不允许改用户名和角色，只用 `role` 定位物理表：
+更新请求不允许改用户名和角色，只用 `role` 定位物理表；班级同样使用学院维度的 `classNumber`：
 
 ```json
 {
@@ -273,7 +273,7 @@ Authorization: Bearer <accessToken>
   "displayName": "李同学",
   "departmentId": 1,
   "majorId": 2,
-  "classId": 3,
+  "classNumber": 7,
   "grade": 2024
 }
 ```
@@ -289,10 +289,10 @@ Authorization: Bearer <accessToken>
 CSV 导入要求 UTF-8、`.csv`、不超过 2 MB、最多 5000 条数据，表头必须严格为：
 
 ```text
-role,username,displayName,departmentId,majorId,classId,grade,initialPassword
+role,username,displayName,department,major,class,grade,initialPassword
 ```
 
-`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
+`department`、`major`、`class` 直接填写学院名称、专业名称和班级号，不填写数据库 ID。班级号按学院统一编号，与 `major` 无关；导入按 `(学院, 班号)` 复用班级，不存在的班号自动在该学院下创建并启用。教师行只填写 `department`，学生行还必须填写 `major`、`class` 和 `grade`。`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
 
 ### 4.4 课程、模型、运行、异常与审计
 
@@ -536,6 +536,8 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 
 `content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。正文和附件至少一项非空；学生必须属于该作业有效团队；作业必须已发布且未过截止时间。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
 
+提交作业不再接收或写入工作量份额。旧版兼容字段 `contributionScores`（每名成员一个总贡献百分比）仅在该团队尚不存在 `LOCKED` 或 `PENDING_CONFIRMATION` 工作量版本时才会被处理，前端不应再传；按评价分支的 `Q` 份额一律通过 6.2 的工作量接口提交。这样提交作业不会覆盖矩阵明细，发起评分仍要求存在全员确认后锁定的工作量版本。
+
 ### 6.2 评分接口 `StudentScoringController`
 
 | 方法与路径 | 请求 | 成功 `data` | HTTP |
@@ -547,7 +549,7 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 | `GET /student/appeals` | 无 | 本人申诉数组 | 200 |
 | `POST /student/scores/{scoreResultId}/appeals` | `AppealCreateRequest` | `null` | 200 |
 
-团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和。工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`myConfirmation`、`comment`，以及 `items` 数组。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。
+团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和。工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`myConfirmation`、`comment`，以及 `items` 和 `objections` 数组。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。`objections` 为当前版本的异议列表，字段 `studentId`、`studentName`、`comment`、`confirmedAt`；非空表示该版本已退回组长修改，不能再被确认。
 
 确认请求：
 
@@ -555,7 +557,7 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 {"status":"OBJECTED","comment":"第二分支的份额与实际记录不一致"}
 ```
 
-状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 时可操作；全部成员确认后服务端自动锁定。
+状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 时可操作；全部成员确认后服务端自动锁定。任意成员提交 `OBJECTED` 后该版本暂停确认，其余成员再提交 `CONFIRMED` 返回 409；组长据异议修改份额并重新提交方案时，旧的 `PENDING_CONFIRMATION` 版本被置为 `SUPERSEDED`，新版本重新进入全员确认，评分只采用 `LOCKED` 版本。
 
 成绩数组只包含 `PUBLISHED` 项，字段：`scoreResultId`、`assignmentId`、`assignmentTitle`、`courseName`、`groupName`、`groupScore`、`contribution`、`ruleScore`、`modelScore`、`finalScore`、`explanation`、`scoringSnapshot`、`reviewReason`、`publishedAt`、`runNo`、`modelVersion`、`ruleVersion`。`finalScore` 优先取最新 `score_revision`，原始已发布 `score_result` 不被覆盖。
 
@@ -624,7 +626,7 @@ role,username,displayName,departmentId,majorId,classId,grade,initialPassword
 
 为避免前端误判，当前 Java Controller 没有：
 
-- 管理员增删改院系、专业、班级或课程的接口；管理员教学数据页是只读。
+- 管理员增删改院系、专业、班级或课程的独立接口；管理员教学数据页是只读。班级号可在创建/编辑学生账号或 CSV 导入时按学院自动创建，不走独立 CRUD。
 - 文件内联预览和删除接口；受鉴权的附件下载已经实现。
 - 教师/学生专用工作台聚合接口。
 - 作业结束/归档、申诉转 `PROCESSING/CANCELLED` 或学生撤销申诉的接口。
