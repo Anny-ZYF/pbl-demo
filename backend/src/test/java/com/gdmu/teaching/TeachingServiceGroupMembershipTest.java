@@ -41,6 +41,7 @@ class TeachingServiceGroupMembershipTest {
         ordered.verify(mapper).promoteGroupLeader(21, 10);
         ordered.verify(mapper).updateGroupLeader(21, 10);
         ordered.verify(mapper).syncGroupMemberCount(21);
+        ordered.verify(mapper).supersedeGroupWorkloads(11, 21);
     }
 
     @Test
@@ -56,6 +57,18 @@ class TeachingServiceGroupMembershipTest {
         var ordered = inOrder(mapper);
         ordered.verify(mapper).reactivateStudentGroupMember(21, 11, 9);
         ordered.verify(mapper).syncGroupMemberCount(21);
+        ordered.verify(mapper).supersedeGroupWorkloads(11, 21);
+    }
+
+    @Test
+    void aStudentCannotLeaveAGradedGroupBeforeTheDeadline() {
+        when(mapper.studentGroup(11, 9)).thenReturn(21L);
+        when(mapper.gradedGroupSubmission(11, 21)).thenReturn(1);
+
+        assertThrows(BusinessException.class, () -> service.leaveStudentGroup(student, 11));
+
+        verify(mapper, never()).leaveStudentGroup(21, 9);
+        verify(mapper, never()).supersedeGroupWorkloads(11, 21);
     }
 
     @Test

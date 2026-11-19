@@ -1,4 +1,7 @@
 -r requirements.txt
 numpy>=1.26,<3.0
+pandas>=2.2,<3.0
+joblib>=1.4,<2.0
+scikit-learn>=1.5,<2.0
 # CPU inference exposes the same xgboost API without CUDA dependencies.
 xgboost-cpu>=2.1,<4.0

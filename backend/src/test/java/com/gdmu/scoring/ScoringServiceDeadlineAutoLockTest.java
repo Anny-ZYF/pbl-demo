@@ -44,6 +44,8 @@ class ScoringServiceDeadlineAutoLockTest {
     void everyGroupsLatestOpenVersionIsLockedAtTheDeadline() {
         when(mapper.expiredAssignmentCount(7)).thenReturn(1);
         when(mapper.expiredOpenWorkloadSetIds(7)).thenReturn(List.of(10L, 20L));
+        when(mapper.autoLockWorkloadSet(10L)).thenReturn(1);
+        when(mapper.autoLockWorkloadSet(20L)).thenReturn(1);
 
         assertThat(service.autoLockExpired(7)).isEqualTo(2);
 
@@ -60,9 +62,22 @@ class ScoringServiceDeadlineAutoLockTest {
         when(mapper.expiredAssignmentCount(8L)).thenReturn(1);
         when(mapper.expiredOpenWorkloadSetIds(7L)).thenReturn(List.of(10L));
         when(mapper.expiredOpenWorkloadSetIds(8L)).thenReturn(List.of(11L, 12L));
+        when(mapper.autoLockWorkloadSet(10L)).thenReturn(1);
+        when(mapper.autoLockWorkloadSet(11L)).thenReturn(1);
+        when(mapper.autoLockWorkloadSet(12L)).thenReturn(1);
 
         assertThat(service.autoLockAllExpired()).isEqualTo(3);
         verify(mapper).autoLockWorkloadSet(12L);
+    }
+
+    @Test
+    void aVersionSupersededByARosterChangeDoesNotSupersedeTheReplacement() {
+        when(mapper.expiredAssignmentCount(7)).thenReturn(1);
+        when(mapper.expiredOpenWorkloadSetIds(7)).thenReturn(List.of(10L));
+        when(mapper.autoLockWorkloadSet(10L)).thenReturn(0);
+
+        assertThat(service.autoLockExpired(7)).isZero();
+        verify(mapper, never()).supersedeOtherWorkloadSets(10L);
     }
 
     @Test

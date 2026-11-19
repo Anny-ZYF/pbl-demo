@@ -563,7 +563,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 教师成绩列表增加 `runStatus`，表示当前返回的 `scoringRunId` 状态；`scorePublished` 随当前运行计算，不能沿用更早运行的已发布标记。教师页面按小组逐人复核、单独发布，展示当前结果状态。
 
-教师申诉项：`id`、`scoreResultId`、`studentId`、`studentName`、`assignmentTitle`、`reason`、`evidence`、`status`、`resolution`、`submittedAt`、`resolvedAt`、`currentScore`。
+教师申诉项：`id`、`scoreResultId`、`studentId`、`studentName`、`courseId`、`assignmentTitle`、`reason`、`evidence`、`status`、`resolution`、`submittedAt`、`resolvedAt`、`currentScore`。
 
 处理请求：
 
@@ -598,6 +598,8 @@ role,username,displayName,department,major,class,grade,initialPassword
 作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`teamFormation`、`submitted`、`scorePublished`。只返回学生有效选课中已发布/结束态作业。`teamFormation` 为兼容旧客户端保留，**恒为 `false`**：系统已取消「发布后 2 天组队期」，不再有独立的组队阶段。
 
 **统一窗口（发布 → 截止）**：作业发布后到 `deadline` 之前，学生随时可以创建/加入/退出小组、填写并确认工作量分配、登记附件、提交作业；加入小组后即可直接填写工作量与提交，无需等待任何组队期。到达 `deadline` 后学生端所有写操作（建组、加入、退出、分工提交与确认、附件登记与删除、作业提交）统一返回 409。截止时尚未全员确认的工作量版本由后端自动锁定（见 6.2）；教师端保留补录分工的入口，否则从未填写分工的小组将永远无法评分，教师补录的新版本同样会进入截止自动锁定。前端不应再用 `publishedAt + 2 天` 自行推算组队期。
+
+教师批改后，该小组的成员和学生分工填写入口锁定。批改前变更成员会将原分工标记为已被替代，组长可按新名单提交分工，已保存的历史版本保留。小组列表使用 `gradingLocked` 标记是否已因批改锁定。
 
 **提交是小组级资源，不是成员级资源**：`submission` 由唯一键 `(assignment_id, group_id, is_latest)` 约束，一个小组同一作业只有一条当前提交。任意 `ACTIVE` 成员提交后，该组所有成员的作业列表与作业详情都会读到同一个 `submitted=true`、`content`、`submitNote`、`attachments` 和 `submissionStatus`（`content` 与 `submitNote` 是同一段「提交说明」的两个兼容字段，见下文）；`submitterId` 只记录是谁点的提交，不决定可见性。列表的 `submitted` 与 `scorePublished` 都通过 `group_member` 关联本组，并排除 `DRAFT`（只上传了草稿附件不算已提交）；`scorePublished` 只认本组 `scoring_run`，不会因其他小组发布成绩而把全作业学生变成"已批阅"。
 
@@ -651,7 +653,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 且作业未过截止时间时可操作；全部成员确认后服务端自动锁定，作业截止时未确认的版本也会自动锁定，两种情况之后所有提交/确认接口返回 409。任意成员提交 `OBJECTED` 后该版本暂停确认，其余成员再提交 `CONFIRMED` 返回 409；组长据异议修改份额并重新提交方案时，旧的 `PENDING_CONFIRMATION` 版本被置为 `SUPERSEDED`，新版本重新进入全员确认，评分只采用 `LOCKED` 版本。
 
-成绩数组只包含 `PUBLISHED` 项，字段：`scoreResultId`、`assignmentId`、`assignmentTitle`、`courseName`、`groupName`、`groupScore`、`contribution`、`ruleScore`、`modelScore`、`finalScore`、`explanation`、`scoringSnapshot`、`reviewReason`、`publishedAt`、`runNo`、`modelVersion`、`ruleVersion`。`finalScore` 优先取最新 `score_revision`，原始已发布 `score_result` 不被覆盖。
+成绩数组只包含 `PUBLISHED` 项，字段：`scoreResultId`、`studentId`、`assignmentId`、`assignmentTitle`、`courseId`、`courseName`、`groupName`、`groupScore`、`contribution`、`ruleScore`、`modelScore`、`finalScore`、`explanation`、`scoringSnapshot`、`reviewReason`、`publishedAt`、`runNo`、`modelVersion`、`ruleVersion`。`finalScore` 优先取最新 `score_revision`，原始已发布 `score_result` 不被覆盖。
 
 申诉请求：
 

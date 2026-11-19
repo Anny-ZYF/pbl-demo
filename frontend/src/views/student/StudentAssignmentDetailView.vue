@@ -94,7 +94,8 @@
                     {{ member.name }}（{{ member.studentNo }}）{{ member.role === 'LEADER' ? ' · 组长' : '' }}
                   </span>
                 </div>
-                <button class="danger-button" type="button" :disabled="groupOperating" @click="leaveGroup">退出当前小组</button>
+                <p v-if="graded" class="muted">教师已批改，本组成员已锁定。</p>
+                <button v-else class="danger-button" type="button" :disabled="groupOperating" @click="leaveGroup">退出当前小组</button>
               </template>
               <template v-else>
                 <div class="group-actions">
@@ -109,10 +110,10 @@
                     </div>
                     <button
                       type="button"
-                      :disabled="groupOperating || Number(group.memberCount) >= Number(group.maxMembers)"
+                      :disabled="groupOperating || group.gradingLocked || Number(group.memberCount) >= Number(group.maxMembers)"
                       @click="joinGroup(group.groupNo)"
                     >
-                      {{ Number(group.memberCount) >= Number(group.maxMembers) ? '已满' : '加入' }}
+                      {{ group.gradingLocked ? '已锁定' : Number(group.memberCount) >= Number(group.maxMembers) ? '已满' : '加入' }}
                     </button>
                   </article>
                 </div>
@@ -278,7 +279,7 @@ const submissionState = computed(() => groupSubmissionStatus({
 const statusText = computed(() => submissionState.value.text)
 const statusClass = computed(() => submissionState.value.tone)
 const assignmentType = computed(() => detail.value?.standardGroupSize ? `${detail.value.standardGroupSize}人作业` : '人数未设置')
-const workloadReadOnly = computed(() => reviewed.value || !submissionOpen.value)
+const workloadReadOnly = computed(() => graded.value || !submissionOpen.value)
 const currentStudentId = computed(() => {
   const user = readStoredUser()
   return user?.id ?? user?.userId ?? user?.studentId ?? null

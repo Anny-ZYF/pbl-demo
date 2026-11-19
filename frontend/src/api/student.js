@@ -4,6 +4,7 @@ export const getCourses = () => http.get('/student/courses')
 export const getAssignments = (courseId) => http.get(`/student/courses/${courseId}/assignments`)
 export const getAssignment = (assignmentId) => http.get(`/student/assignments/${assignmentId}`)
 export const getScores = () => http.get('/student/scores')
+export const getStudentAppeals = () => http.get('/student/appeals')
 export const appealScore = (scoreResultId, data) => http.post(`/student/scores/${scoreResultId}/appeals`, data)
 export const submitAssignment = (assignmentId, data) => http.post(`/student/assignments/${assignmentId}/submission`, data)
 // 上传后先登记为小组内可见的草稿附件，正式提交时自动随提交转为教师可见。

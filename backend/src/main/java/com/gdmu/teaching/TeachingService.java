@@ -269,6 +269,7 @@ public class TeachingService {
 
     @Transactional
     public Map<String, Object> createGroup(UserPrincipal teacher, long assignmentId, GroupCreateRequest request) {
+        mapper.lockAssignmentTeams(assignmentId);
         Long courseId = mapper.assignmentCourse(assignmentId, teacher.id());
         Integer p = mapper.assignmentStandardGroupSize(assignmentId, teacher.id());
         require(courseId != null && p != null, HttpStatus.NOT_FOUND, "作业不存在或不属于当前教师");
@@ -379,9 +380,11 @@ public class TeachingService {
 
     @Transactional
     public void leaveStudentGroup(UserPrincipal student, long assignmentId) {
+        mapper.lockAssignmentTeams(assignmentId);
         requireAssignmentOpen(assignmentId, "作业已截止，小组已锁定，不能退出");
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.CONFLICT, "当前没有加入小组");
+        requireGroupNotGraded(assignmentId, groupId);
         String role = mapper.activeGroupMemberRole(groupId, student.id());
         require(mapper.leaveStudentGroup(groupId, student.id()) == 1, HttpStatus.CONFLICT, "退出小组失败");
         if (mapper.activeGroupMemberCount(groupId) == 0) {
@@ -395,10 +398,12 @@ public class TeachingService {
             }
             mapper.syncGroupMemberCount(groupId);
         }
+        invalidateGroupWorkloads(student, assignmentId, groupId);
     }
 
     @Transactional
     public Map<String,Object> createStudentGroup(UserPrincipal student, long assignmentId) {
+        mapper.lockAssignmentTeams(assignmentId);
         Long courseId = mapper.assignmentCourseForStudent(assignmentId, student.id());
         Integer standard = mapper.studentAssignmentGroupSize(assignmentId);
         require(courseId != null && standard != null, HttpStatus.NOT_FOUND, "作业不存在或未发布");
@@ -421,6 +426,7 @@ public class TeachingService {
 
     @Transactional
     public void joinStudentGroup(UserPrincipal student, long assignmentId, int groupNo) {
+        mapper.lockAssignmentTeams(assignmentId);
         Long courseId = mapper.assignmentCourseForStudent(assignmentId, student.id());
         require(courseId != null, HttpStatus.NOT_FOUND, "作业不存在或未选修该课程");
         requireAssignmentOpen(assignmentId, "作业已截止，无法再加入小组");
@@ -429,10 +435,24 @@ public class TeachingService {
         require(mapper.studentGroup(assignmentId, student.id()) == null, HttpStatus.CONFLICT, "你已经加入该作业的小组");
         require(mapper.activeGroupMemberCount(((Number) group.get("id")).longValue()) < ((Number) group.get("maxMembers")).intValue(), HttpStatus.CONFLICT, "小组人数已满");
         long groupId = ((Number) group.get("id")).longValue();
+        requireGroupNotGraded(assignmentId, groupId);
         if (mapper.reactivateStudentGroupMember(groupId, assignmentId, student.id()) == 0) {
             mapper.joinStudentGroup(groupId, assignmentId, student.id());
         }
         mapper.syncGroupMemberCount(groupId);
+        invalidateGroupWorkloads(student, assignmentId, groupId);
+    }
+
+    private void requireGroupNotGraded(long assignmentId, long groupId) {
+        require(mapper.gradedGroupSubmission(assignmentId, groupId) == 0, HttpStatus.CONFLICT,
+                "该小组已批改或发布成绩，不能变更成员");
+    }
+
+    private void invalidateGroupWorkloads(UserPrincipal student, long assignmentId, long groupId) {
+        if (mapper.supersedeGroupWorkloads(assignmentId, groupId) > 0) {
+            auditService.record(student, "WORKLOAD_SUPERSEDED_BY_ROSTER", "GROUP", groupId,
+                    Map.of("assignmentId", assignmentId));
+        }
     }
 
     public List<Map<String, Object>> studentGroupMembers(UserPrincipal student, long groupId) {
@@ -443,6 +463,7 @@ public class TeachingService {
 
     @Transactional
     public void submit(UserPrincipal student, long assignmentId, StudentSubmissionRequest request) {
+        mapper.lockAssignmentTeams(assignmentId);
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.FORBIDDEN, "当前学生不属于该作业的有效团队");
         require(mapper.assignmentDeadline(assignmentId) != null, HttpStatus.CONFLICT,

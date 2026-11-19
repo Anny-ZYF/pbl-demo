@@ -43,6 +43,16 @@ public interface ScoringMapper {
             """)
     Long lockedWorkloadSet(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
 
+    @Select("SELECT id FROM assignment WHERE id=#{assignmentId} FOR UPDATE")
+    Long lockAssignmentForWorkload(long assignmentId);
+
+    @Select("""
+            SELECT COUNT(*) FROM submission
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND is_latest=1
+              AND (status='GRADED' OR is_score_published=1)
+            """)
+    int gradedGroupSubmission(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
+
     @Select("""
             SELECT assignment_part_id AS partId,student_id AS studentId,share
             FROM workload_item WHERE workload_set_id=#{workloadSetId}
@@ -141,7 +151,7 @@ public interface ScoringMapper {
             JOIN group_member gm ON gm.group_id=ws.group_id AND gm.student_id=#{studentId}
               AND gm.status='ACTIVE'
             LEFT JOIN workload_confirmation wc ON wc.workload_set_id=ws.id AND wc.student_id=#{studentId}
-            WHERE ws.assignment_id=#{assignmentId}
+            WHERE ws.assignment_id=#{assignmentId} AND ws.status<>'SUPERSEDED'
             ORDER BY ws.version_no DESC LIMIT 1
             """)
     Map<String, Object> studentWorkload(@Param("assignmentId") long assignmentId,
@@ -149,7 +159,7 @@ public interface ScoringMapper {
 
     @Select("""
             SELECT id FROM workload_set
-            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId}
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND status<>'SUPERSEDED'
             ORDER BY version_no DESC LIMIT 1
             """)
     Long latestWorkloadSetId(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
@@ -160,6 +170,7 @@ public interface ScoringMapper {
                      AND ws.locked_at >= a.deadline) AS autoLocked
             FROM workload_set ws JOIN assignment a ON a.id=ws.assignment_id
             WHERE ws.assignment_id=#{assignmentId} AND ws.group_id=#{groupId} AND a.teacher_id=#{teacherId}
+              AND ws.status<>'SUPERSEDED'
             ORDER BY ws.version_no DESC LIMIT 1
             """)
     Map<String, Object> teacherWorkload(@Param("assignmentId") long assignmentId,
@@ -258,7 +269,7 @@ public interface ScoringMapper {
               ON current_set.id=#{setId} AND old_set.group_id=current_set.group_id
               AND old_set.assignment_id=current_set.assignment_id
             SET old_set.status='SUPERSEDED',old_set.updated_at=CURRENT_TIMESTAMP
-            WHERE old_set.id<>current_set.id
+            WHERE old_set.version_no<current_set.version_no
               AND old_set.status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED','LOCKED')
             """)
     int supersedeOtherWorkloadSets(long setId);
@@ -266,7 +277,7 @@ public interface ScoringMapper {
     @Update("""
             UPDATE workload_set SET status='LOCKED',locked_at=COALESCE(locked_at,CURRENT_TIMESTAMP),
               updated_at=CURRENT_TIMESTAMP
-            WHERE id=#{setId} AND status<>'LOCKED'
+            WHERE id=#{setId} AND status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED')
             """)
     int autoLockWorkloadSet(long setId);
 
@@ -434,7 +445,7 @@ public interface ScoringMapper {
     int projectFinalScores(long runId);
 
     @Select("""
-            SELECT r.id AS scoreResultId,a.id AS assignmentId,a.title AS assignmentTitle,c.name AS courseName,
+            SELECT r.id AS scoreResultId,r.student_id AS studentId,a.id AS assignmentId,a.title AS assignmentTitle,c.id AS courseId,c.name AS courseName,
                    g.name AS groupName,r.group_score AS groupScore,r.contribution,r.rule_score AS ruleScore,
                    r.model_score AS modelScore,
                    COALESCE((SELECT rev.revised_score FROM score_revision rev
@@ -486,7 +497,7 @@ public interface ScoringMapper {
 
     @Select("""
             SELECT ap.id,ap.score_result_id AS scoreResultId,ap.student_id AS studentId,s.name AS studentName,
-                   a.title AS assignmentTitle,ap.reason,ap.evidence_json AS evidence,ap.status,
+                   a.course_id AS courseId,a.title AS assignmentTitle,ap.reason,ap.evidence_json AS evidence,ap.status,
                    ap.resolution,ap.submitted_at AS submittedAt,ap.resolved_at AS resolvedAt,
                    COALESCE((SELECT rev.revised_score FROM score_revision rev
                              WHERE rev.score_result_id=r.id ORDER BY rev.created_at DESC,rev.id DESC LIMIT 1),

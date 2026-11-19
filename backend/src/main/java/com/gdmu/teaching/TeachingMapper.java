@@ -74,7 +74,7 @@ public interface TeachingMapper {
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
                    m.name AS majorName,c.name AS className,
                    CASE WHEN g.id IS NULL THEN NULL ELSE CONCAT('Team', LPAD(COALESCE(CAST(REGEXP_SUBSTR(g.name, '[0-9]+') AS UNSIGNED), g.id), 2, '0')) END AS groupName,
-                   sr.id AS scoringRunId,sr.status AS runStatus,COALESCE(r.final_score, fs.score) AS finalScore,
+                   sr.id AS scoringRunId,sr.status AS runStatus,COALESCE(rev.revised_score, r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
                    r.status AS scoringStatus,
                    CASE WHEN sr.id IS NOT NULL THEN sr.status='PUBLISHED' AND r.status='PUBLISHED'
@@ -91,7 +91,7 @@ public interface TeachingMapper {
                      (SELECT sub.teacher_score FROM submission sub
                       WHERE sub.assignment_id=#{assignmentId} AND sub.group_id=g.id
                         AND sub.is_latest=1 ORDER BY sub.id DESC LIMIT 1)) AS groupScore,
-                   COALESCE(r.final_score, i.individual_final_score) AS individualFinalScore
+                   COALESCE(rev.revised_score, r.final_score, i.individual_final_score) AS individualFinalScore
             FROM student_course sc JOIN student_users s ON s.id=sc.student_id
             LEFT JOIN major m ON m.id=s.major_id
             LEFT JOIN `class` c ON c.id=s.class_id
@@ -105,6 +105,9 @@ public interface TeachingMapper {
               WHERE sr2.assignment_id=#{assignmentId}
               ORDER BY sr2.id DESC LIMIT 1)
             LEFT JOIN score_result r ON r.student_id=s.id AND r.scoring_run_id=sr.id
+            LEFT JOIN score_revision rev ON rev.id=(
+              SELECT revision.id FROM score_revision revision WHERE revision.score_result_id=r.id
+              ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)
             LEFT JOIN individual_score i ON i.student_id=s.id AND i.submission_id=(
               SELECT sub.id FROM submission sub WHERE sub.assignment_id=#{assignmentId}
                 AND sub.group_id=g.id AND sub.is_latest=1 ORDER BY sub.id DESC LIMIT 1)
@@ -472,7 +475,15 @@ public interface TeachingMapper {
             """)
     List<Map<String, Object>> studentGroups(long studentId);
 
-    @Select("SELECT g.id,g.name,CAST(SUBSTRING(g.name,2,LENGTH(g.name)-3) AS UNSIGNED) AS groupNo,g.max_members AS maxMembers,COUNT(gm.id) AS memberCount FROM group_table g LEFT JOIN group_member gm ON gm.group_id=g.id AND gm.status='ACTIVE' WHERE g.assignment_id=#{assignmentId} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED') GROUP BY g.id ORDER BY g.id")
+    @Select("""
+            SELECT g.id,g.name,CAST(SUBSTRING(g.name,2,LENGTH(g.name)-3) AS UNSIGNED) AS groupNo,
+                   g.max_members AS maxMembers,COUNT(gm.id) AS memberCount,
+                   EXISTS(SELECT 1 FROM submission s WHERE s.group_id=g.id AND s.assignment_id=g.assignment_id
+                          AND s.is_latest=1 AND (s.status='GRADED' OR s.is_score_published=1)) AS gradingLocked
+            FROM group_table g LEFT JOIN group_member gm ON gm.group_id=g.id AND gm.status='ACTIVE'
+            WHERE g.assignment_id=#{assignmentId} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')
+            GROUP BY g.id ORDER BY g.id
+            """)
     List<Map<String,Object>> studentAssignmentGroups(long assignmentId);
 
     @Select("SELECT role FROM group_member WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
@@ -480,6 +491,23 @@ public interface TeachingMapper {
 
     @Update("UPDATE group_member SET status='LEFT',left_time=CURRENT_TIMESTAMP,update_time=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND student_id=#{studentId} AND status='ACTIVE'")
     int leaveStudentGroup(@Param("groupId") long groupId,@Param("studentId") long studentId);
+
+    @Select("SELECT id FROM assignment WHERE id=#{assignmentId} FOR UPDATE")
+    Long lockAssignmentTeams(long assignmentId);
+
+    @Select("""
+            SELECT COUNT(*) FROM submission
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND is_latest=1
+              AND (status='GRADED' OR is_score_published=1)
+            """)
+    int gradedGroupSubmission(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
+
+    @Update("""
+            UPDATE workload_set SET status='SUPERSEDED',updated_at=CURRENT_TIMESTAMP
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId}
+              AND status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED','LOCKED')
+            """)
+    int supersedeGroupWorkloads(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
 
     @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE' ORDER BY joined_at,id LIMIT 1")
     Long nextGroupLeader(long groupId);

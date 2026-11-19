@@ -27,7 +27,7 @@
         <div v-else class="empty-state"><el-icon><Document /></el-icon><strong>{{ assignments.length ? '当前筛选下没有作业' : '课程暂未发布作业' }}</strong><span>{{ assignments.length ? '请选择其他状态查看作业。' : '教师发布作业后会显示在这里。' }}</span></div>
       </main>
       <main v-else class="assignment-section scores-section">
-        <header class="section-heading"><div><h2>成绩</h2><p>查看本课程已发布的个人成绩和团队贡献</p></div><span>{{ courseScores.length }} 条</span></header>
+        <header class="section-heading"><div><h2>成绩</h2><p>查看本课程已发布的个人成绩和团队贡献</p></div><RouterLink :to="{ name: 'student-scores', query: { courseId: course.id, courseName: course.name } }">评分明细与申诉</RouterLink></header>
         <div v-if="courseScores.length" class="score-list"><article v-for="item in courseScores" :key="item.scoreResultId"><div><h3>{{ item.assignmentTitle }}</h3><p>{{ item.groupName || '未分组' }} · 贡献 {{ ratio(item.contribution) }}</p></div><div class="score-values"><span class="group-score">团队成绩 <b>{{ numberScore(item.groupScore) }}</b></span><span class="final-score">最终得分 <b>{{ numberScore(item.finalScore) }}</b></span></div></article></div>
         <div v-else class="empty-state"><el-icon><Medal /></el-icon><strong>本课程暂无已发布成绩</strong><span>教师发布成绩后会显示在这里。</span></div>
       </main>
@@ -50,7 +50,7 @@ const tabs=[{label:'课程资料',value:'resources',disabled:true},{label:'作�
 const filteredAssignments=computed(()=>assignments.value.filter(item=>activeFilter.value==='all'||assignmentState(item)===activeFilter.value).sort((left,right)=>{const field=sortMode.value.startsWith('published')?'publishedAt':'deadline',direction=sortMode.value.endsWith('asc')?1:-1,leftTime=parseDate(left[field])?.getTime()??(direction===1?Number.MAX_SAFE_INTEGER:0),rightTime=parseDate(right[field])?.getTime()??(direction===1?Number.MAX_SAFE_INTEGER:0);return (leftTime-rightTime)*direction}))
 const pageCount=computed(()=>Math.max(1,Math.ceil(filteredAssignments.value.length/8)))
 const pagedAssignments=computed(()=>filteredAssignments.value.slice((page.value-1)*8,page.value*8))
-const courseScores=computed(()=>scores.value.filter(item=>item.courseName===course.value?.name))
+const courseScores=computed(()=>scores.value.filter(item=>String(item.courseId)===String(route.params.courseId)))
 const parseDate=value=>{if(!value)return null;const date=new Date(value);return Number.isNaN(date.getTime())?null:date}
 const formatDate=value=>{const date=parseDate(value);return date?date.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}):'未设置'}
 const formatDeadline=value=>{const date=parseDate(value);return date?date.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'未设置'}

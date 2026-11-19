@@ -36,6 +36,10 @@
       <article class="grade-panel">
         <h3>教师评分</h3>
         <p>MCQS 结果仅作为建议，最终成绩由教师复核确认。</p>
+        <el-button v-if="selected.groupId" @click="workloadVisible = true">查看或补录分工</el-button>
+        <TeacherWorkloadDialog v-if="selected.groupId" :key="selected.groupId" v-model="workloadVisible"
+          :assignment-id="assignmentId" :group-id="selected.groupId"
+          :published="Boolean(selected.scorePublished ?? selected.isScorePublished)" />
         <div class="form-row">
           <label>团队成绩</label>
           <input v-model.number="gradeForm.groupScore" type="number" min="0" max="100" step="0.5" placeholder="请输入 0-100 分" />
@@ -133,7 +137,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElDialog, ElEmpty, ElMessage } from 'element-plus'
+import { ElButton, ElDialog, ElEmpty, ElMessage } from 'element-plus'
+import TeacherWorkloadDialog from '@/components/teacher/TeacherWorkloadDialog.vue'
 import { getAssignments, getSubmissions, gradeSubmission, runScoring } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
 import { attachmentDisplayName, downloadAuthenticatedFile } from '@/utils/downloadFile'
@@ -150,6 +155,7 @@ const submissions = ref([])
 const loading = ref(false)
 const errorMessage = ref('')
 const reviewVisible = ref(false)
+const workloadVisible = ref(false)
 const selected = ref(null)
 const saving = ref(false)
 const gradeForm = ref({ groupScore: null, comment: '' })

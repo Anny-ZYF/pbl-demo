@@ -1,7 +1,7 @@
 <template>
   <div class="student-page">
     <header class="heading">
-      <button v-if="courseName" type="button" class="back" @click="router.back()">← 返回课程</button>
+      <button v-if="courseName" type="button" class="back" @click="courseId ? router.push({ name: 'student-course', params: { courseId } }) : router.back()">← 返回课程</button>
       <div>
         <p>COURSE SCORES</p>
         <h1>{{ courseName ? `${courseName} · 成绩` : '我的成绩' }}</h1>
@@ -9,9 +9,11 @@
       </div>
     </header>
     <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
+    <div v-if="appealsError" class="error" role="alert">{{ appealsError }}</div>
     <section class="panel">
       <div class="panel-head"><h2>成绩记录</h2><span>{{ visibleScores.length }} 条</span></div>
-      <div v-for="item in visibleScores" :key="item.scoreResultId" class="score-row">
+      <article v-for="item in visibleScores" :key="item.scoreResultId" class="score-record">
+      <div class="score-row">
         <div class="score-title">
           <strong>{{ item.assignmentTitle }}</strong>
           <small>{{ item.courseName }} · {{ item.groupName || '未分组' }}</small>
@@ -20,10 +22,32 @@
           <span>贡献 {{ ratio(item.contribution) }}</span>
           <b>{{ item.finalScore == null ? '未发布' : Number(item.finalScore).toFixed(2) }}</b>
         </div>
-        <button v-if="item.scoreResultId" type="button" class="appeal-button" @click="openAppeal(item)">
+        <button v-if="canAppeal(item)" type="button" class="appeal-button" @click="openAppeal(item)">
           我要申诉
         </button>
       </div>
+      <p v-if="appealsByScore[item.scoreResultId]" class="appeal-status">
+        申诉{{ appealLabels[appealsByScore[item.scoreResultId].status] || '已提交' }}
+        <span v-if="appealsByScore[item.scoreResultId].resolution">：{{ appealsByScore[item.scoreResultId].resolution }}</span>
+      </p>
+      <details class="score-details">
+        <summary>评分明细</summary>
+        <dl>
+          <dt>团队成绩</dt><dd>{{ score(item.groupScore) }}</dd>
+          <dt>规则分</dt><dd>{{ score(item.ruleScore) }}</dd>
+          <dt>模型建议</dt><dd>{{ item.modelScore == null ? '未采用模型' : score(item.modelScore) }}</dd>
+          <dt>最终成绩</dt><dd>{{ score(item.finalScore) }}</dd>
+          <dt>规则版本</dt><dd>{{ item.ruleVersion || '—' }}</dd>
+          <dt>模型版本</dt><dd>{{ item.modelScore == null ? '—' : item.modelVersion }}</dd>
+          <template v-if="item.reviewReason"><dt>教师调整理由</dt><dd>{{ item.reviewReason }}</dd></template>
+        </dl>
+        <ul v-if="item.branchDetails.length">
+          <li v-for="branch in item.branchDetails" :key="branch.id">
+            {{ branch.name }} · 权重 {{ ratio(branch.weight) }} · 本人份额 {{ ratio(branch.share) }}
+          </li>
+        </ul>
+      </details>
+      </article>
       <el-empty v-if="!visibleScores.length" description="该课程暂无已发布成绩" />
     </section>
 
@@ -45,13 +69,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElDialog, ElEmpty, ElMessage } from 'element-plus'
-import { appealScore, getScores } from '@/api/student'
+import { appealScore, getScores, getStudentAppeals } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
 
 const route = useRoute()
 const router = useRouter()
 const scores = ref([])
 const errorMessage = ref('')
+const appealsError = ref('')
+const appealsByScore = ref({})
+const appealLabels = { SUBMITTED: '待处理', PROCESSING: '处理中', ACCEPTED: '已接受', REJECTED: '已驳回' }
 const appealVisible = ref(false)
 const appealTarget = ref(null)
 const appealReason = ref('')
@@ -59,10 +86,42 @@ const appealError = ref('')
 const saving = ref(false)
 
 const courseName = computed(() => String(route.query.courseName || ''))
-const visibleScores = computed(() => courseName.value
-  ? scores.value.filter((item) => item.courseName === courseName.value)
+const courseId = computed(() => String(route.query.courseId || ''))
+const visibleScores = computed(() => courseId.value || courseName.value
+  ? scores.value.filter(item => courseId.value ? String(item.courseId) === courseId.value : item.courseName === courseName.value)
   : scores.value)
 const ratio = (value) => value == null ? '—' : `${(Number(value) * 100).toFixed(1)}%`
+const score = value => value == null ? '—' : Number(value).toFixed(2)
+const isPending = id => ['SUBMITTED', 'PROCESSING'].includes(appealsByScore.value[id]?.status)
+const canAppeal = item => {
+  const publishedAt = new Date(item.publishedAt).getTime()
+  return item.scoreResultId && !isPending(item.scoreResultId)
+    && Number.isFinite(publishedAt) && Date.now() <= publishedAt + 7 * 24 * 60 * 60 * 1000
+}
+
+function scoreBranches(value) {
+  let snapshot = value.scoringSnapshot
+  if (typeof snapshot === 'string') {
+    try { snapshot = JSON.parse(snapshot) } catch { return [] }
+  }
+  // The score snapshot contains every member's allocation. Render only the recipient's share.
+  const ownShares = (snapshot?.allocations || []).filter(row => String(row.studentId) === String(value.studentId))
+  return (snapshot?.parts || []).map(part => ({ ...part,
+    share: ownShares.find(row => String(row.partId) === String(part.id))?.share }))
+}
+
+async function loadAppeals() {
+  appealsError.value = ''
+  try {
+    const latest = {}
+    for (const item of await getStudentAppeals()) {
+      latest[item.scoreResultId] ??= item
+    }
+    appealsByScore.value = latest
+  } catch (error) {
+    appealsError.value = getErrorMessage(error, '申诉进度加载失败')
+  }
+}
 
 const openAppeal = (item) => {
   appealTarget.value = item
@@ -79,6 +138,7 @@ const submitAppeal = async () => {
     await appealScore(appealTarget.value.scoreResultId, { reason: appealReason.value.trim() })
     ElMessage.success('申诉已提交')
     appealVisible.value = false
+    await loadAppeals()
   } catch (error) {
     appealError.value = getErrorMessage(error, '申诉提交失败')
   } finally {
@@ -87,8 +147,9 @@ const submitAppeal = async () => {
 }
 
 onMounted(async () => {
+  void loadAppeals()
   try {
-    scores.value = await getScores()
+    scores.value = (await getScores()).map(item => ({ ...item, branchDetails: scoreBranches(item) }))
   } catch (error) {
     errorMessage.value = getErrorMessage(error, '成绩加载失败')
   }
@@ -125,5 +186,11 @@ textarea:focus{border-color:#6b9ed8}
 .save{border:0;color:#fff;background:#356798}
 .save:disabled{opacity:.5;cursor:not-allowed}
 .error{margin:12px 0 0;padding:12px;border-radius:9px;color:#b42318;background:#fff5f5;font-size:13px}
+.score-record { border-bottom: 1px solid #edf1f5; }
+.score-record .score-row { border: 0; }
+.score-details, .appeal-status { margin: 0 22px 14px; color: #52657a; font-size: 13px; }
+.score-details summary { cursor: pointer; color: #356798; }
+.score-details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; }
+.score-details dd { margin: 0; overflow-wrap: anywhere; }
 @media(max-width:600px){.heading h1{font-size:25px}.score-row{flex-wrap:wrap;padding:16px}.score-title{flex:1 1 100%}.score-value{text-align:left}.score-value b{font-size:20px}}
 </style>

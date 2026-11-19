@@ -59,6 +59,7 @@ public class ScoringService {
         // Students are frozen at the deadline, but the teacher keeps an escape hatch: a group that
         // never submitted a workload version would otherwise be impossible to score. Any version
         // created after the deadline is locked by the same auto-lock path (sweeper + lazy read).
+        mapper.lockAssignmentForWorkload(assignmentId);
         require(mapper.teacherOwnsGroup(groupId, assignmentId, teacher.id()) == 1, HttpStatus.NOT_FOUND,
                 "团队不存在或不属于当前教师的作业");
         return persistWorkload(teacher, assignmentId, groupId, request, true);
@@ -67,9 +68,12 @@ public class ScoringService {
     @Transactional
     public Map<String, Object> proposeWorkload(UserPrincipal student, long assignmentId, long groupId,
                                                WorkloadAllocationRequest request) {
+        mapper.lockAssignmentForWorkload(assignmentId);
         require(mapper.studentLeadsGroup(groupId, assignmentId, student.id()) == 1, HttpStatus.FORBIDDEN,
                 "只有该团队组长可以提交工作量分配方案");
         requireWorkloadOpen(assignmentId);
+        require(mapper.gradedGroupSubmission(assignmentId, groupId) == 0, HttpStatus.CONFLICT,
+                "小组已批改，不能修改分工");
         return persistWorkload(student, assignmentId, groupId, request, false);
     }
 
@@ -112,6 +116,7 @@ public class ScoringService {
         return Map.of("id", setId, "version", version, "status", "PENDING_CONFIRMATION");
     }
 
+    @Transactional
     public Map<String, Object> studentWorkload(UserPrincipal student, long assignmentId) {
         autoLockExpired(assignmentId);
         Map<String, Object> summary = mapper.studentWorkload(assignmentId, student.id());
@@ -157,11 +162,14 @@ public class ScoringService {
     public int autoLockExpired(long assignmentId) {
         if (mapper.expiredAssignmentCount(assignmentId) == 0) return 0;
         List<Long> setIds = mapper.expiredOpenWorkloadSetIds(assignmentId);
+        int locked = 0;
         for (Long setId : setIds) {
-            mapper.supersedeOtherWorkloadSets(setId);
-            mapper.autoLockWorkloadSet(setId);
+            if (mapper.autoLockWorkloadSet(setId) == 1) {
+                mapper.supersedeOtherWorkloadSets(setId);
+                locked++;
+            }
         }
-        return setIds.size();
+        return locked;
     }
 
     @Transactional
@@ -173,6 +181,7 @@ public class ScoringService {
         return locked;
     }
 
+    @Transactional
     public Map<String, Object> teacherWorkload(UserPrincipal teacher, long assignmentId, long groupId) {
         autoLockExpired(assignmentId);
         Map<String, Object> summary = mapper.teacherWorkload(assignmentId, groupId, teacher.id());
