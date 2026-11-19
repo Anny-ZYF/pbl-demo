@@ -169,7 +169,7 @@
           </el-form-item>
         </div>
         <el-form-item label="制品 URI" prop="artifactUri">
-          <el-input v-model.trim="registrationForm.artifactUri" placeholder="algorithm-service://artifacts/xgboost-model.json" />
+          <el-input v-model.trim="registrationForm.artifactUri" placeholder="algorithm-service://artifacts/score-model.joblib" />
         </el-form-item>
         <el-form-item label="制品 SHA-256" prop="artifactSha256">
           <el-input v-model.trim="registrationForm.artifactSha256" maxlength="64" placeholder="64 位十六进制摘要" />
@@ -326,11 +326,11 @@ const registrationVisible = ref(false)
 const registrationFormRef = ref()
 const registering = ref(false)
 const registrationForm = reactive({
-  modelKey: 'paper-score-p4',
+  modelKey: 'smoothstep-score',
   version: '',
   artifactUri: '',
   artifactSha256: '',
-  featureSchemaJson: '["contribution","actual_group_size","group_score"]',
+  featureSchemaJson: '["标准人数","个人贡献度","作业总分"]',
   hyperparametersJson: '',
   metricsJson: ''
 })
@@ -351,7 +351,7 @@ function validateJson(_rule, value, callback) {
 function validateFeatureSchema(_rule, value, callback) {
   try {
     const parsed = JSON.parse(value)
-    const expected = ['contribution', 'actual_group_size', 'group_score']
+    const expected = ['标准人数', '个人贡献度', '作业总分']
     if (!Array.isArray(parsed) || parsed.length !== expected.length
       || parsed.some((item, index) => item !== expected[index])) {
       callback(new Error('特征顺序必须与生产模型契约一致'))
@@ -382,8 +382,8 @@ const registrationRules = {
   artifactUri: [
     { required: true, message: '请输入制品 URI', trigger: 'blur' },
     {
-      pattern: /^algorithm-service:\/\/artifacts\/[A-Za-z0-9._-]+\.json$/,
-      message: 'URI 必须指向算法服务的 JSON 模型产物',
+      pattern: /^algorithm-service:\/\/artifacts\/[A-Za-z0-9._-]+\.joblib$/,
+      message: 'URI 必须指向算法服务的 joblib 模型产物',
       trigger: 'blur'
     }
   ],
@@ -498,11 +498,11 @@ function searchAnomalies() {
 
 function resetRegistrationForm() {
   Object.assign(registrationForm, {
-    modelKey: 'paper-score-p4',
+    modelKey: 'smoothstep-score',
     version: '',
     artifactUri: '',
     artifactSha256: '',
-    featureSchemaJson: '["contribution","actual_group_size","group_score"]',
+    featureSchemaJson: '["标准人数","个人贡献度","作业总分"]',
     hyperparametersJson: '',
     metricsJson: ''
   })
@@ -547,7 +547,7 @@ function modelStatusType(status) {
 }
 
 function canActivateModel(row) {
-  return String(row.modelKey || '').toLowerCase() === 'paper-score-p4'
+  return String(row.modelKey || '').toLowerCase() === 'smoothstep-score'
     && String(row.algorithm || '').toUpperCase() === 'XGBOOST'
     && ['VALIDATED', 'RETIRED'].includes(String(row.status || '').toUpperCase())
 }

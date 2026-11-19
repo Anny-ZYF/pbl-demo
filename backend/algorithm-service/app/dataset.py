@@ -1,91 +1,69 @@
-"""Deterministic reconstruction of the paper's 1,785 synthetic samples."""
+"""Deterministic reconstruction of the scoring grid used by 1108.py."""
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import io
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.rules import baseline_score, individual_score
+import numpy as np
+import pandas as pd
+
+from app.rules import BOOST_CAP, MAX_SCORE, MIN_SCORE
 
 
-DATASET_COLUMNS = (
-    "sample_id",
-    "standard_group_size",
-    "actual_group_size",
-    "contribution",
-    "group_score",
-    "baseline_score",
-    "individual_score",
-)
+FEATURE_ORDER = ["标准人数", "个人贡献度", "作业总分"]
+TARGET_COLUMN = "个人成绩"
+DATASET_COLUMNS = (*FEATURE_ORDER, TARGET_COLUMN)
 
 
-@dataclass(frozen=True)
-class SyntheticSample:
-    sample_id: int
-    standard_group_size: int
-    actual_group_size: int
-    contribution: float
-    group_score: float
-    baseline_score: float
-    individual_score: float
+def calc_score_vector(
+    p: np.ndarray, x: np.ndarray, g: np.ndarray, b: float = BOOST_CAP
+) -> np.ndarray:
+    """Vectorized form of calc_score() in 1108.py, in the same arithmetic order."""
+
+    threshold = 1.0 / p
+    t = np.zeros_like(x)
+    score = np.zeros_like(x)
+
+    low = x <= threshold
+    t[low] = x[low] * p[low]
+    score[low] = g[low] * (3 * t[low] ** 2 - 2 * t[low] ** 3)
+
+    high = x > threshold
+    denom = 1 - 1.0 / p[high]
+    t[high] = (x[high] - 1.0 / p[high]) / denom
+    score[high] = g[high] + b * (3 * t[high] ** 2 - 2 * t[high] ** 3)
+
+    return np.clip(score, MIN_SCORE, MAX_SCORE)
 
 
-def generate_paper_samples() -> list[SyntheticSample]:
-    """Generate the p=4 grid described in the paper in a stable order."""
+def build_grid_frame() -> pd.DataFrame:
+    """Reproduce the 1108.py meshgrid: p=1..4, x=0..1 step .01, G=0..100 step 1."""
 
-    samples: list[SyntheticSample] = []
-    score_values = [float(index * 5) for index in range(21)]
-    contribution_values = [index / 20.0 for index in range(21)]
-
-    for actual_group_size in range(1, 6):
-        contributions = [1.0] if actual_group_size == 1 else contribution_values
-        for contribution in contributions:
-            for group_score in score_values:
-                samples.append(
-                    SyntheticSample(
-                        sample_id=len(samples) + 1,
-                        standard_group_size=4,
-                        actual_group_size=actual_group_size,
-                        contribution=contribution,
-                        group_score=group_score,
-                        baseline_score=baseline_score(4, actual_group_size, group_score),
-                        individual_score=individual_score(
-                            4,
-                            actual_group_size,
-                            group_score,
-                            contribution,
-                        ),
-                    )
-                )
-    return samples
+    p_list = np.arange(1, 5, 1)
+    x_list = np.arange(0, 1.01, 0.01)
+    g_list = np.arange(0, 101, 1)
+    p, x, g = np.meshgrid(p_list, x_list, g_list, indexing="ij")
+    data = np.column_stack([p.ravel(), x.ravel(), g.ravel()])
+    frame = pd.DataFrame(data, columns=FEATURE_ORDER)
+    frame[TARGET_COLUMN] = calc_score_vector(data[:, 0], data[:, 1], data[:, 2])
+    return frame
 
 
-def _csv_value(value: object) -> object:
-    if isinstance(value, float):
-        return f"{value:.12f}"
-    return value
-
-
-def dataset_csv_bytes(samples: list[SyntheticSample]) -> bytes:
+def dataset_csv_bytes(frame: pd.DataFrame) -> bytes:
     buffer = io.StringIO(newline="")
-    writer = csv.DictWriter(buffer, fieldnames=DATASET_COLUMNS, lineterminator="\n")
-    writer.writeheader()
-    for sample in samples:
-        writer.writerow({key: _csv_value(value) for key, value in asdict(sample).items()})
+    frame.to_csv(buffer, index=False, float_format="%.12f", lineterminator="\n")
     return buffer.getvalue().encode("utf-8")
 
 
-def dataset_sha256(samples: list[SyntheticSample]) -> str:
-    return hashlib.sha256(dataset_csv_bytes(samples)).hexdigest()
+def dataset_sha256(frame: pd.DataFrame) -> str:
+    return hashlib.sha256(dataset_csv_bytes(frame)).hexdigest()
 
 
-def write_dataset(path: Path, samples: list[SyntheticSample] | None = None) -> str:
-    rows = samples if samples is not None else generate_paper_samples()
+def write_dataset(path: Path, frame: pd.DataFrame | None = None) -> str:
+    rows = frame if frame is not None else build_grid_frame()
     content = dataset_csv_bytes(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     return hashlib.sha256(content).hexdigest()
-

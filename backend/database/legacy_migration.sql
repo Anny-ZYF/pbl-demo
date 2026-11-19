@@ -11,6 +11,9 @@
 -- New database: apply after V1.
 -- Existing pre-Flyway database: baseline at version 1, then apply V2 once.
 -- Do not rerun manually after a successful Flyway migration.
+-- This is a historical baseline: it creates the retired paper-mcqs-v1 rule
+-- metadata. After it succeeds, Flyway V7 must run to switch the platform to
+-- smoothstep-v1 and the delivered score-model.joblib artifact.
 
 -- Groupwork production core schema
 -- Target: MySQL 8.0.29+

@@ -14,7 +14,7 @@
 
 JDK 25 可以运行以 Java 21 为目标的构建，但项目实际编译目标以 `backend/pom.xml` 的 Java 21 为准。
 
-推荐启动顺序：MySQL → Python 算法服务 → Spring Boot → 反向代理/前端。没有激活 XGBoost 时 Python 服务不是规则评分的硬依赖；但正式启用模型后必须监控它。
+推荐启动顺序：MySQL → Python 算法服务 → Spring Boot → 反向代理/前端。模型覆盖 `p=1..4`；没有激活模型或制品校验失败时 Python 服务按 `smoothstep-v1` 确定性规则回退，不是规则评分的硬依赖，但正式启用模型后必须监控它。
 
 ### 1.1 Docker Compose 快速启动
 
@@ -111,6 +111,7 @@ openssl rand -hex 32
 - `V2__legacy_and_core_migration.sql` 创建完整核心结构、兼容旧表并写入规则/模型元数据；只允许 Flyway 执行一次。
 - `backend/database/groupwork_schema.sql` 是空库结构参考。
 - `backend/database/groupwork_seed.sql` 是可重复执行的规则/模型元数据参考，不含可登录管理员或部署模型。
+- `V8__account_logical_deletion.sql` 为教师/学生账号增加注销标记（`deleted_at`）并重建 `user_account_view`；账号删除是逻辑删除，历史教学数据不清理。部署或重启后端时由 Flyway 自动执行，新删除接口在这之后才可用。
 - `backend/database/legacy_migration.sql` 是旧库迁移的可审查副本；正常应用部署仍以 classpath 中的 Flyway V2 为准。
 
 不要在同一数据库中混用“手工导入完整 SQL”和“让 Flyway 从头迁移”两条路径。
@@ -167,7 +168,7 @@ python -m pip install --upgrade pip
 # 只需要规则 API：
 python -m pip install -r requirements.txt
 
-# 需要加载仓库 XGBoost 产物时安装推理依赖：
+# 需要加载仓库 joblib 模型时安装推理依赖（含 numpy/pandas/scikit-learn/joblib/xgboost）：
 python -m pip install -r requirements-runtime.txt
 
 $env:ALGORITHM_SERVICE_TOKEN = '<same-random-token-as-Java>'
@@ -351,18 +352,24 @@ server {
 
 ## 7. 模型部署与激活
 
-当前签入产物 `paper-score-p4 / xgb-p4-seed2025-172a3cf9486e` 的 holdout 指标为 RMSE `0.4828993804`、MAE `0.3568366849`、R² `0.9997004404`，已达到管理端准入阈值；模型文件 SHA-256 为 `172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d`。`ELIGIBLE` 只表示离线准入通过，不代表数据库已注册、算法服务已加载或平台已激活。按以下顺序部署：
+当前签入产物 `smoothstep-score / smoothstep-xgb-a2b2c30a05b1` 的实测 holdout 指标为 RMSE `0.8942731732`、MAE `0.6381276982`、R² `0.9992094930`，已达到管理端准入阈值；模型文件 `score-model.joblib` 的 SHA-256 为 `a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644`。`ELIGIBLE` 只表示离线准入通过，不代表数据库已注册、算法服务已加载或平台已激活。模型是拟合确定性规则网格的 sklearn `XGBRegressor`，不是真实课堂标注数据训练的结果，不得对外宣称已做真实数据验证。
 
-1. 训练生成新的独立版本目录，不覆盖正在服务的目录。
-2. 对照 `sha256.json` 校验 `xgboost-model.json`、`metadata.json`、`metrics.json`。
-3. 确认 `metadata.featureOrder` 为 `contribution,actual_group_size,group_score`，`ruleVersion=paper-mcqs-v1`，版本与 Java 契约一致。
+**`joblib` 基于 pickle 序列化，加载即反序列化执行代码。** 只部署仓库内、SHA-256 已登记的可信制品；绝不加载外部上传或来源不明的 `.joblib`，也不要用管理员接口登记任意路径的模型文件。
+
+对已有库执行 Flyway `V7__smoothstep_scoring_rule.sql` 时，迁移会退役旧规则/模型，并自动登记、激活本仓库交付且哈希已校验的这一版本；下面的手动流程用于部署**新制品**或做受控回滚，两者不要混用。
+
+按以下顺序部署：
+
+1. 生成新的独立版本目录，不覆盖正在服务的目录；用 `python -m scripts.build_artifacts` 重建 metadata、metrics 和哈希清单（该脚本会重新计算真实 holdout 指标，不会编造数值）。
+2. 对照 `sha256.json` 校验 `score-model.joblib`、`metadata.json`、`metrics.json`、`score-samples.csv`。
+3. 确认 `metadata.featureOrder` 为 `标准人数,个人贡献度,作业总分`、`ruleVersion=smoothstep-v1`、`modelFormat=joblib-sklearn`、`scoreRange=[0,100]`，版本与 Java 契约一致。
 4. 原子切换 `ALGORITHM_MODEL_DIR` 指向新目录并重启算法服务。
-5. 调用 `/health` 和带内部 Token 的 `/v1/model`，确认实际加载的 `modelVersion`。
-6. 通过管理员模型注册接口提交相同版本、`algorithm-service://artifacts/xgboost-model.json`、哈希、特征、超参数和完整指标。
-7. 注册达到阈值成为 `VALIDATED` 后再激活。
-8. 用非生产作业做一轮模型、回退、偏差异常和教师复核冒烟，再用于正式课程。
+5. 调用 `/health` 和带内部 Token 的 `/v1/model`，确认实际加载的 `modelVersion` 与 `artifactSha256`。
+6. 通过管理员模型注册接口提交相同版本、`algorithm-service://artifacts/score-model.joblib`、哈希、中文特征、超参数和完整指标；前端注册表单已固定该契约。
+7. 注册达到阈值成为 `VALIDATED` 后再激活；`V7__smoothstep_scoring_rule.sql` 已在升级时登记新规则与模型版本并退役旧版本，无需手工插入。
+8. 用非生产作业做一轮模型、回退、边界分数（0/100）、偏差异常和教师复核冒烟，再用于正式课程。
 
-如果 Java 激活版本与 Python 返回的版本或 `artifactSha256` 不同，整批模型输出会被拒绝并回退规则分。
+如果 Java 激活版本与 Python 返回的版本或 `artifactSha256` 不同，整批模型输出会被拒绝并回退规则分。所有分数输出都裁剪在 `0..100`。
 
 ## 8. 健康检查与冒烟
 
@@ -441,7 +448,7 @@ Windows 可用 `mysqldump.exe` 输出到受保护目录，并由任务计划程�
 
 MySQL、算法、后端和前端分别设置 640、384、768、64 MiB 的内存上限，并限制容器日志大小。后端、算法和数据库统一使用 `Asia/Shanghai` 时区。MySQL、算法和后端没有发布宿主机端口；前端仅绑定 `127.0.0.1:15880`，对外流量由共享 HTTPS 网关通过 `pbl-edge` 网络的 `pbl-web` 别名转发。
 
-算法镜像安装 [XGBoost 官方 CPU 包](https://xgboost.readthedocs.io/en/stable/install.html#minimal-installation-cpu-only)，不包含 GPU 依赖。构建时可通过 `.env` 的 `PBL_DEBIAN_MIRROR` 和 `PBL_PIP_INDEX_URL` 选择下载源；本次服务器使用阿里云镜像。模型文件、校验哈希和评分公式保持原样。
+算法镜像按 `requirements-runtime.txt` 安装 [XGBoost 官方 CPU 包](https://xgboost.readthedocs.io/en/stable/install.html#minimal-installation-cpu-only) 以及 `scikit-learn`、`pandas`、`joblib`、`numpy`，不包含 GPU 依赖。构建时可通过 `.env` 的 `PBL_DEBIAN_MIRROR` 和 `PBL_PIP_INDEX_URL` 选择下载源；本次服务器使用阿里云镜像。模型文件、校验哈希和评分公式保持原样；更换模型制品后必须同步 `sha256.json` 与数据库登记的版本哈希。
 
 所有运维命令显式指定私密环境文件和生产 Compose 文件：
 

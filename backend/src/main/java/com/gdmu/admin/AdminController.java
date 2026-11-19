@@ -78,6 +78,18 @@ public class AdminController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/accounts/{id}")
+    public ApiResponse<Map<String, Object>> deleteAccount(@AuthenticationPrincipal UserPrincipal admin,
+                                                          @PathVariable long id, @RequestParam String role) {
+        return ApiResponse.ok(service.deleteAccount(admin, id, role));
+    }
+
+    @DeleteMapping("/organization/{type}/{id}")
+    public ApiResponse<Map<String, Object>> deleteOrganization(@AuthenticationPrincipal UserPrincipal admin,
+                                                               @PathVariable String type, @PathVariable long id) {
+        return ApiResponse.ok(service.deleteOrganization(admin, type, id));
+    }
+
     @GetMapping("/courses")
     public ApiResponse<PageResponse<Map<String, Object>>> courses(
             @RequestParam(required = false) String keyword,

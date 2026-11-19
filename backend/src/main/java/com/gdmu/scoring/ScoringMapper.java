@@ -21,7 +21,6 @@ public interface ScoringMapper {
     @Select("""
             SELECT s.id AS submissionId,a.id AS assignmentId,s.group_id AS groupId,a.teacher_id AS teacherId,
                    a.standard_group_size AS standardGroupSize,
-                   (SELECT COUNT(*) FROM group_member gm WHERE gm.group_id=s.group_id AND gm.status='ACTIVE') AS actualGroupSize,
                    s.teacher_score AS groupScore,
                    COALESCE(a.scoring_rule_id,(SELECT id FROM scoring_rule WHERE status='ACTIVE' ORDER BY id LIMIT 1)) AS scoringRuleId
             FROM submission s JOIN assignment a ON a.id=s.assignment_id
@@ -134,16 +133,31 @@ public interface ScoringMapper {
 
     @Select("""
             SELECT ws.id,ws.version_no AS versionNo,ws.status,ws.submitted_at AS submittedAt,
-                   wc.status AS myConfirmation,wc.comment
-            FROM workload_set ws JOIN workload_confirmation wc ON wc.workload_set_id=ws.id
-            WHERE ws.assignment_id=#{assignmentId} AND wc.student_id=#{studentId}
+                   wc.status AS myConfirmation,wc.comment,
+                   (a.deadline IS NOT NULL AND ws.locked_at IS NOT NULL
+                     AND ws.locked_at >= a.deadline) AS autoLocked
+            FROM workload_set ws
+            JOIN assignment a ON a.id=ws.assignment_id
+            JOIN group_member gm ON gm.group_id=ws.group_id AND gm.student_id=#{studentId}
+              AND gm.status='ACTIVE'
+            LEFT JOIN workload_confirmation wc ON wc.workload_set_id=ws.id AND wc.student_id=#{studentId}
+            WHERE ws.assignment_id=#{assignmentId}
             ORDER BY ws.version_no DESC LIMIT 1
             """)
     Map<String, Object> studentWorkload(@Param("assignmentId") long assignmentId,
                                         @Param("studentId") long studentId);
 
     @Select("""
-            SELECT ws.id,ws.version_no AS versionNo,ws.status,ws.submitted_at AS submittedAt,ws.locked_at AS lockedAt
+            SELECT id FROM workload_set
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId}
+            ORDER BY version_no DESC LIMIT 1
+            """)
+    Long latestWorkloadSetId(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
+
+    @Select("""
+            SELECT ws.id,ws.version_no AS versionNo,ws.status,ws.submitted_at AS submittedAt,ws.locked_at AS lockedAt,
+                   (a.deadline IS NOT NULL AND ws.locked_at IS NOT NULL
+                     AND ws.locked_at >= a.deadline) AS autoLocked
             FROM workload_set ws JOIN assignment a ON a.id=ws.assignment_id
             WHERE ws.assignment_id=#{assignmentId} AND ws.group_id=#{groupId} AND a.teacher_id=#{teacherId}
             ORDER BY ws.version_no DESC LIMIT 1
@@ -215,19 +229,71 @@ public interface ScoringMapper {
             """)
     int lockWorkload(long setId);
 
+    // ---- Deadline auto-lock -------------------------------------------------
+    // At the deadline the latest still-open workload version of each group is frozen even when
+    // some members never confirmed. Scoring always reads a LOCKED version afterwards.
+
+    @Select("SELECT COUNT(*) FROM assignment WHERE id=#{assignmentId} AND (deadline IS NULL OR deadline <= CURRENT_TIMESTAMP)")
+    int expiredAssignmentCount(long assignmentId);
+
+    @Select("""
+            SELECT COUNT(*) FROM workload_set ws JOIN assignment a ON a.id=ws.assignment_id
+            WHERE ws.id=#{setId} AND (a.deadline IS NULL OR a.deadline <= CURRENT_TIMESTAMP)
+            """)
+    int expiredWorkloadSetCount(long setId);
+
+    @Select("""
+            SELECT ws.id FROM workload_set ws JOIN assignment a ON a.id=ws.assignment_id
+            WHERE ws.assignment_id=#{assignmentId} AND a.deadline IS NOT NULL
+              AND a.deadline <= CURRENT_TIMESTAMP
+              AND ws.status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED')
+              AND ws.version_no=(SELECT MAX(w2.version_no) FROM workload_set w2
+                                 WHERE w2.group_id=ws.group_id AND w2.assignment_id=ws.assignment_id)
+            ORDER BY ws.id
+            """)
+    List<Long> expiredOpenWorkloadSetIds(long assignmentId);
+
+    @Update("""
+            UPDATE workload_set old_set JOIN workload_set current_set
+              ON current_set.id=#{setId} AND old_set.group_id=current_set.group_id
+              AND old_set.assignment_id=current_set.assignment_id
+            SET old_set.status='SUPERSEDED',old_set.updated_at=CURRENT_TIMESTAMP
+            WHERE old_set.id<>current_set.id
+              AND old_set.status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED','LOCKED')
+            """)
+    int supersedeOtherWorkloadSets(long setId);
+
+    @Update("""
+            UPDATE workload_set SET status='LOCKED',locked_at=COALESCE(locked_at,CURRENT_TIMESTAMP),
+              updated_at=CURRENT_TIMESTAMP
+            WHERE id=#{setId} AND status<>'LOCKED'
+            """)
+    int autoLockWorkloadSet(long setId);
+
+    @Select("""
+            SELECT DISTINCT ws.assignment_id FROM workload_set ws
+            JOIN assignment a ON a.id=ws.assignment_id
+            WHERE a.deadline IS NOT NULL AND a.deadline <= CURRENT_TIMESTAMP
+              AND ws.status IN ('DRAFT','PENDING_CONFIRMATION','CONFIRMED')
+              AND ws.version_no=(SELECT MAX(w2.version_no) FROM workload_set w2
+                                 WHERE w2.group_id=ws.group_id AND w2.assignment_id=ws.assignment_id)
+            LIMIT 200
+            """)
+    List<Long> assignmentsWithExpiredOpenWorkloads();
+
     @Select("""
             SELECT mv.id,mv.version,mv.artifact_sha256 AS artifactSha256 FROM model_version mv
-            WHERE mv.status='ACTIVE' AND mv.algorithm='XGBOOST' AND mv.model_key='paper-score-p4'
+            WHERE mv.status='ACTIVE' AND mv.algorithm='XGBOOST' AND mv.model_key='smoothstep-score'
             ORDER BY mv.activated_at DESC LIMIT 1
             """)
     ActiveModelRow activeModel();
 
     @Insert("""
             INSERT INTO scoring_run(run_no,assignment_id,group_id,submission_id,scoring_rule_id,model_version_id,
-              status,standard_group_size,actual_group_size,group_score,input_hash,triggered_by_teacher_id,
+              status,standard_group_size,group_score,input_hash,triggered_by_teacher_id,
               started_at,created_at,updated_at)
             VALUES(#{runNo},#{c.assignmentId},#{c.groupId},#{c.submissionId},#{c.scoringRuleId},#{modelId},
-              'CREATED',#{c.standardGroupSize},#{c.actualGroupSize},#{c.groupScore},#{inputHash},#{c.teacherId},
+              'CREATED',#{c.standardGroupSize},#{c.groupScore},#{inputHash},#{c.teacherId},
               CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
             """)
     int insertRun(@Param("runNo") String runNo, @Param("c") SubmissionContext context,
@@ -238,14 +304,13 @@ public interface ScoringMapper {
 
     @Insert("""
             INSERT INTO scoring_input_snapshot(scoring_run_id,student_id,contribution,standard_group_size,
-              actual_group_size,group_score,feature_schema_version,features_json,source_snapshot_json,feature_hash,created_at)
-            VALUES(#{runId},#{studentId},#{contribution},#{standardGroupSize},#{actualGroupSize},#{groupScore},
-              'paper-mcqs-v1',CAST(#{featuresJson} AS JSON),CAST(#{sourceJson} AS JSON),#{featureHash},CURRENT_TIMESTAMP)
+              group_score,feature_schema_version,features_json,source_snapshot_json,feature_hash,created_at)
+            VALUES(#{runId},#{studentId},#{contribution},#{standardGroupSize},#{groupScore},
+              'smoothstep-v1',CAST(#{featuresJson} AS JSON),CAST(#{sourceJson} AS JSON),#{featureHash},CURRENT_TIMESTAMP)
             """)
     int insertSnapshot(@Param("runId") long runId, @Param("studentId") long studentId,
                        @Param("contribution") double contribution,
                        @Param("standardGroupSize") int standardGroupSize,
-                       @Param("actualGroupSize") int actualGroupSize,
                        @Param("groupScore") double groupScore,
                        @Param("featuresJson") String featuresJson, @Param("sourceJson") String sourceJson,
                        @Param("featureHash") String featureHash);

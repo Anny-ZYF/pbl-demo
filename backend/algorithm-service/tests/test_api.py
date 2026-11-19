@@ -16,9 +16,22 @@ def _payload(standard_group_size: int = 4) -> dict:
                 "studentId": "student-1",
                 "contribution": 0.62,
                 "standardGroupSize": standard_group_size,
-                "actualGroupSize": 2,
                 "groupScore": 80,
             }
+        ]
+    }
+
+
+def _all_sizes_payload() -> dict:
+    return {
+        "items": [
+            {
+                "studentId": f"student-{p}",
+                "contribution": 0.6,
+                "standardGroupSize": p,
+                "groupScore": 80,
+            }
+            for p in range(1, 5)
         ]
     }
 
@@ -27,6 +40,7 @@ def test_health_is_public() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["ruleVersion"] == "smoothstep-v1"
 
 
 def test_internal_endpoints_require_bearer_token(monkeypatch) -> None:
@@ -65,17 +79,32 @@ def test_missing_model_falls_back_to_rule_scores(monkeypatch) -> None:
     assert result["finalSuggestion"] == result["ruleScore"]
 
 
-def test_non_p4_request_is_explicitly_rule_only(monkeypatch) -> None:
+def test_all_standard_group_sizes_use_the_model(monkeypatch) -> None:
+    class FakeModelRuntime:
+        available = True
+        reason = "loaded"
+        metadata = {"version": "test-model", "modelSha256": "a" * 64}
+        metrics = {}
+        hashes = {}
+
+        @staticmethod
+        def predict_batch(features):
+            return [50.0 for _ in features]
+
     monkeypatch.setenv("ALGORITHM_SERVICE_TOKEN", "test-secret")
+    monkeypatch.setattr(main_module, "model_runtime", FakeModelRuntime())
     response = client.post(
         "/v1/predict",
         headers={"Authorization": "Bearer test-secret"},
-        json=_payload(standard_group_size=3),
+        json=_all_sizes_payload(),
     )
     assert response.status_code == 200
-    result = response.json()["items"][0]
-    assert result["mode"] == "rule_only"
-    assert result["explanation"] == "standard_group_size_not_supported_by_model"
+    items = response.json()["items"]
+    assert len(items) == 4
+    assert {item["studentId"] for item in items} == {
+        "student-1", "student-2", "student-3", "student-4"
+    }
+    assert all(item["mode"] == "model" for item in items)
 
 
 def test_model_deviation_over_two_is_flagged(monkeypatch) -> None:
@@ -105,7 +134,7 @@ def test_model_deviation_over_two_is_flagged(monkeypatch) -> None:
 
 
 def test_exactly_two_point_deviation_is_not_flagged(monkeypatch) -> None:
-    expected_rule = individual_score(4, 2, 80.0, 0.62)
+    expected_rule = individual_score(4, 80.0, 0.62)
 
     class FakeModelRuntime:
         available = True
@@ -161,11 +190,53 @@ def test_model_prediction_failure_falls_back_to_rule(monkeypatch) -> None:
     assert result["explanation"] == "model_prediction_failed:RuntimeError"
 
 
-def test_invalid_group_size_is_rejected(monkeypatch) -> None:
+def test_response_scores_never_leave_the_zero_to_hundred_range(monkeypatch) -> None:
+    class OutOfRangeModelRuntime:
+        available = True
+        reason = "loaded"
+        metadata = {"version": "test-model"}
+        metrics = {}
+        hashes = {}
+
+        @staticmethod
+        def predict_batch(features):
+            return [250.0 for _ in features]
+
+    monkeypatch.setenv("ALGORITHM_SERVICE_TOKEN", "test-secret")
+    monkeypatch.setattr(main_module, "model_runtime", OutOfRangeModelRuntime())
+    response = client.post(
+        "/v1/predict",
+        headers={"Authorization": "Bearer test-secret"},
+        json=_payload(),
+    )
+    assert response.status_code == 200
+    result = response.json()["items"][0]
+    assert result["modelScore"] == 100.0
+    assert 0.0 <= result["ruleScore"] <= 100.0
+    assert 0.0 <= result["finalSuggestion"] <= 100.0
+
+
+def test_inputs_outside_declared_ranges_are_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("ALGORITHM_SERVICE_TOKEN", "test-secret")
+    for field, value in (
+        ("standardGroupSize", 5),
+        ("contribution", 1.2),
+        ("groupScore", 101),
+    ):
+        payload = _payload()
+        payload["items"][0][field] = value
+        response = client.post(
+            "/v1/predict",
+            headers={"Authorization": "Bearer test-secret"},
+            json=payload,
+        )
+        assert response.status_code == 422, field
+
+
+def test_legacy_actual_group_size_field_is_rejected(monkeypatch) -> None:
     monkeypatch.setenv("ALGORITHM_SERVICE_TOKEN", "test-secret")
     payload = _payload()
-    payload["items"][0]["standardGroupSize"] = 1
-    payload["items"][0]["actualGroupSize"] = 3
+    payload["items"][0]["actualGroupSize"] = 2
     response = client.post(
         "/v1/predict",
         headers={"Authorization": "Bearer test-secret"},

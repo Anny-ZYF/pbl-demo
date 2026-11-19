@@ -17,16 +17,21 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import jakarta.validation.Valid;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
 @Validated
 public class AdminService {
-    private static final String PRODUCTION_MODEL_KEY = "paper-score-p4";
+    private static final String PRODUCTION_MODEL_KEY = "smoothstep-score";
     private static final List<String> PRODUCTION_MODEL_FEATURES =
-            List.of("contribution", "actual_group_size", "group_score");
+            List.of("标准人数", "个人贡献度", "作业总分");
+    private static final String ARTIFACT_URI_PATTERN =
+            "^algorithm-service://artifacts/[A-Za-z0-9._-]+\\.joblib$";
     private final AdminMapper mapper;
     private final AccountMapper accountMapper;
     private final PasswordEncoder passwordEncoder;
@@ -77,8 +82,20 @@ public class AdminService {
                 row -> number(row.get("departmentId")), LinkedHashMap::new, java.util.stream.Collectors.toList()));
         Map<Long, List<Map<String, Object>>> majorsByDepartment = majors.stream().collect(java.util.stream.Collectors.groupingBy(
                 row -> number(row.get("departmentId")), LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        Map<Long, Long> teachersByDepartment = countBy(mapper.teacherCountsByDepartment(), "departmentId");
+        Map<Long, Long> studentsByDepartment = countBy(mapper.studentCountsByDepartment(), "departmentId");
+        Map<Long, Long> studentsByMajor = countBy(mapper.studentCountsByMajor(), "majorId");
+        Map<Long, Long> studentsByClass = countBy(mapper.studentCountsByClass(), "classId");
+        for (Map<String, Object> major : majors) {
+            major.put("memberCount", studentsByMajor.getOrDefault(((Number) major.get("id")).longValue(), 0L));
+        }
+        for (Map<String, Object> clazz : classes) {
+            clazz.put("memberCount", studentsByClass.getOrDefault(((Number) clazz.get("id")).longValue(), 0L));
+        }
         for (Map<String, Object> department : departments) {
             long departmentId = ((Number) department.get("id")).longValue();
+            department.put("memberCount", teachersByDepartment.getOrDefault(departmentId, 0L)
+                    + studentsByDepartment.getOrDefault(departmentId, 0L));
             department.put("majors", majorsByDepartment.getOrDefault(departmentId, List.of()));
             department.put("classes", classesByDepartment.getOrDefault(departmentId, List.of()));
         }
@@ -101,6 +118,8 @@ public class AdminService {
         Role role = Role.parse(request.role());
         require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "管理员只能创建教师或学生账号");
         String username = request.username().trim();
+        // '#<id>' is reserved for tombstones of logically deleted accounts.
+        require(!username.startsWith("#"), HttpStatus.BAD_REQUEST, "登录账号不能以 # 开头");
         require(mapper.accountUsernameCount(username) == 0, HttpStatus.CONFLICT, "登录账号已被使用");
         Long classId = validateOrganization(role, request.departmentId(), request.majorId(), request.classId(),
                 request.classNumber(), request.grade());
@@ -169,6 +188,109 @@ public class AdminService {
         requireOne(changed, "账号不存在");
         accountMapper.revokeAllRefreshTokens(id, role.name());
         auditService.record(admin, "ACCOUNT_PASSWORD_RESET", "ACCOUNT", role + ":" + id, Map.of("role", role.name()));
+    }
+
+    /**
+     * Logical deletion: keep the row (and all course / team / submission / score history),
+     * but remove the account from admin lists, disable it, bump tokenVersion, revoke refresh
+     * tokens and rewrite the login name to a reserved tombstone so it can be reused safely.
+     */
+    @Transactional
+    public Map<String, Object> deleteAccount(UserPrincipal admin, long id, String roleValue) {
+        Role role = Role.parse(roleValue);
+        require(role == Role.TEACHER || role == Role.STUDENT,
+                HttpStatus.BAD_REQUEST, "只能注销教师或学生账号");
+        Map<String, Object> account = mapper.accountForDeletion(id, role.name());
+        require(account != null && account.get("deletedAt") == null,
+                HttpStatus.NOT_FOUND, "账号不存在或已注销");
+        String username = String.valueOf(account.get("username"));
+        String tombstone = "#" + id;
+        require(tombstone.length() <= 20 && mapper.accountUsernameCount(tombstone) == 0,
+                HttpStatus.CONFLICT, "注销标识已被占用，请稍后重试");
+        int changed = switch (role) {
+            case TEACHER -> mapper.softDeleteTeacher(id, tombstone, admin.id());
+            case STUDENT -> mapper.softDeleteStudent(id, tombstone, admin.id());
+            default -> throw new BusinessException(HttpStatus.BAD_REQUEST, "不支持的账号角色");
+        };
+        requireOne(changed, "账号不存在或已注销");
+        accountMapper.revokeAllRefreshTokens(id, role.name());
+        auditService.record(admin, "ACCOUNT_DELETED", "ACCOUNT", role + ":" + id,
+                Map.of("role", role.name(), "username", username, "tombstone", tombstone,
+                        "mode", "LOGICAL_DELETE"));
+        return Map.of("id", id, "role", role.name(), "username", username, "mode", "LOGICAL_DELETE");
+    }
+
+    /** Only organization nodes with no people and no course/team/submission references can go. */
+    @Transactional
+    public Map<String, Object> deleteOrganization(UserPrincipal admin, String type, long id) {
+        OrgType orgType = OrgType.parse(type);
+        Map<String, Object> node = switch (orgType) {
+            case DEPARTMENT -> mapper.departmentById(id);
+            case MAJOR -> mapper.majorById(id);
+            case CLASS -> mapper.classById(id);
+        };
+        require(node != null, HttpStatus.NOT_FOUND, "组织节点不存在");
+        Map<String, Object> usage = switch (orgType) {
+            case DEPARTMENT -> mapper.departmentUsage(id);
+            case MAJOR -> mapper.majorUsage(id);
+            case CLASS -> mapper.classUsage(id);
+        };
+        List<String> blockers = new ArrayList<>();
+        switch (orgType) {
+            case DEPARTMENT -> {
+                addBlocker(blockers, usage, "teachers", "名在职教师");
+                addBlocker(blockers, usage, "majors", "个下属专业");
+                addBlocker(blockers, usage, "classes", "个下属班级");
+            }
+            case MAJOR -> {
+                addBlocker(blockers, usage, "students", "名在册学生");
+                addBlocker(blockers, usage, "classes", "个下属班级");
+                addBlocker(blockers, usage, "courses", "门关联课程");
+                addBlocker(blockers, usage, "courseMajors", "条课程专业关联");
+                addBlocker(blockers, usage, "groups", "个关联小组");
+            }
+            case CLASS -> {
+                addBlocker(blockers, usage, "students", "名在册学生");
+                addBlocker(blockers, usage, "groups", "个关联小组");
+            }
+        }
+        require(blockers.isEmpty(), HttpStatus.CONFLICT,
+                "该" + orgType.label + "仍有引用，不能删除：" + String.join("、", blockers));
+        int changed = switch (orgType) {
+            case DEPARTMENT -> mapper.deleteDepartment(id);
+            case MAJOR -> mapper.deleteMajor(id);
+            case CLASS -> mapper.deleteClass(id);
+        };
+        requireOne(changed, "组织节点不存在");
+        String name = String.valueOf(node.get("name"));
+        auditService.record(admin, "ORGANIZATION_DELETED", "ORGANIZATION", orgType.name() + ":" + id,
+                Map.of("type", orgType.name(), "id", id, "name", name));
+        return Map.of("id", id, "type", orgType.name(), "name", name);
+    }
+
+    private void addBlocker(List<String> blockers, Map<String, Object> usage, String key, String suffix) {
+        long count = number(usage.get(key));
+        if (count > 0) blockers.add(count + suffix);
+    }
+
+    private enum OrgType {
+        DEPARTMENT("院系"), MAJOR("专业"), CLASS("班级");
+        private final String label;
+
+        OrgType(String label) {
+            this.label = label;
+        }
+
+        static OrgType parse(String value) {
+            String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+            return switch (normalized) {
+                case "DEPARTMENT", "院系" -> DEPARTMENT;
+                case "MAJOR", "专业" -> MAJOR;
+                case "CLASS", "班级" -> CLASS;
+                default -> throw new BusinessException(HttpStatus.BAD_REQUEST,
+                        "组织类型必须是 department、major 或 class");
+            };
+        }
     }
 
     public PageResponse<Map<String, Object>> courses(String keyword, String teacherName, String status,
@@ -279,8 +401,8 @@ public class AdminService {
         if (!PRODUCTION_MODEL_KEY.equals(request.modelKey())) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "模型键必须为 " + PRODUCTION_MODEL_KEY);
         }
-        if (!request.artifactUri().matches("^algorithm-service://artifacts/[A-Za-z0-9._-]+\\.json$")) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "artifactUri 必须指向算法服务的 JSON 模型产物");
+        if (!request.artifactUri().matches(ARTIFACT_URI_PATTERN)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "artifactUri 必须指向算法服务的 joblib 模型产物");
         }
         try {
             JsonNode schema = objectMapper.readTree(request.featureSchemaJson());
@@ -306,7 +428,7 @@ public class AdminService {
         String hash = String.valueOf(model.get("artifactSha256"));
         String features = String.valueOf(model.get("featureSchemaJson"));
         String metrics = String.valueOf(model.get("metricsJson"));
-        if (!uri.matches("^algorithm-service://artifacts/[A-Za-z0-9._-]+\\.json$")
+        if (!uri.matches(ARTIFACT_URI_PATTERN)
                 || !hash.matches("^[a-fA-F0-9]{64}$")) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "模型产物标识或哈希不合法");
         }
@@ -336,6 +458,15 @@ public class AdminService {
 
     private long number(Object value) {
         return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private Map<Long, Long> countBy(List<Map<String, Object>> rows, String keyColumn) {
+        Map<Long, Long> counts = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object key = row.get(keyColumn);
+            if (key instanceof Number id) counts.put(id.longValue(), number(row.get("memberCount")));
+        }
+        return counts;
     }
 
     private void requireOne(int changed, String message) {

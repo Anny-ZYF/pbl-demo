@@ -1,5 +1,6 @@
 package com.gdmu.storage;
 
+import com.gdmu.common.AttachmentNames;
 import com.gdmu.common.BusinessException;
 import com.gdmu.security.UserPrincipal;
 import jakarta.annotation.PostConstruct;
@@ -25,7 +26,7 @@ import java.util.UUID;
 @Service
 public class LocalStorageService implements StorageService {
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "txt", "md", "png", "jpg", "jpeg");
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rar", "txt", "md", "png", "jpg", "jpeg");
     private final Path root;
 
     public LocalStorageService(StorageProperties properties) {
@@ -38,11 +39,15 @@ public class LocalStorageService implements StorageService {
     }
 
     @Override
-    public StoredObject store(MultipartFile file, UserPrincipal owner) {
-        if (file.isEmpty() || file.getOriginalFilename() == null) {
+    public StoredObject store(MultipartFile file, UserPrincipal owner, String originalNameOverride) {
+        if (file.isEmpty()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "上传文件为空");
         }
-        String originalName = Path.of(file.getOriginalFilename()).getFileName().toString();
+        String headerName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
+        String rawName = originalNameOverride != null && !originalNameOverride.isBlank()
+                ? originalNameOverride
+                : AttachmentNames.repairMojibake(headerName);
+        String originalName = AttachmentNames.sanitize(rawName, headerName);
         String extension = extension(originalName);
         if (!ALLOWED_EXTENSIONS.contains(extension)) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "不支持该文件类型");

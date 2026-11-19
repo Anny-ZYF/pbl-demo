@@ -1,11 +1,11 @@
-"""FastAPI entrypoint for MCQS and optional XGBoost scoring."""
+"""FastAPI entrypoint for smoothstep rule scoring with an optional XGBoost model."""
 
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI
 
 from app.model_runtime import ModelRuntime
-from app.rules import RULE_VERSION, individual_score
+from app.rules import MAX_SCORE, MIN_SCORE, RULE_VERSION, individual_score
 from app.schemas import (
     BatchPredictionInput,
     BatchPredictionResponse,
@@ -17,8 +17,8 @@ from app.security import bearer_scheme, require_internal_token
 
 
 app = FastAPI(
-    title="Groupwork MCQS Algorithm Service",
-    version="1.0.0",
+    title="Groupwork Smoothstep Algorithm Service",
+    version="2.0.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -66,39 +66,30 @@ def model_status() -> ModelStatusResponse:
 )
 def predict(payload: BatchPredictionInput) -> BatchPredictionResponse:
     rule_scores = [
-        individual_score(
-            item.standardGroupSize,
-            item.actualGroupSize,
-            item.groupScore,
-            item.contribution,
-        )
+        individual_score(item.standardGroupSize, item.groupScore, item.contribution)
         for item in payload.items
-    ]
-    eligible_indices = [
-        index
-        for index, item in enumerate(payload.items)
-        if item.standardGroupSize == 4
     ]
     model_scores: dict[int, float] = {}
     prediction_failure: str | None = None
 
-    if eligible_indices and model_runtime.available:
+    # The model is trained over the whole p=1..4 grid, so every item is eligible.
+    if model_runtime.available:
         try:
             predicted = model_runtime.predict_batch(
                 [
                     [
-                        payload.items[index].contribution,
-                        payload.items[index].actualGroupSize,
-                        payload.items[index].groupScore,
+                        item.standardGroupSize,
+                        item.contribution,
+                        item.groupScore,
                     ]
-                    for index in eligible_indices
+                    for item in payload.items
                 ]
             )
-            if len(predicted) != len(eligible_indices):
+            if len(predicted) != len(payload.items):
                 raise RuntimeError("model returned an unexpected prediction count")
             model_scores = {
-                item_index: min(100.0, max(0.0, score))
-                for item_index, score in zip(eligible_indices, predicted, strict=True)
+                index: min(MAX_SCORE, max(MIN_SCORE, score))
+                for index, score in enumerate(predicted)
             }
         except Exception as error:  # Model failure must never block rule scoring.
             prediction_failure = f"model_prediction_failed:{type(error).__name__}"
@@ -107,10 +98,7 @@ def predict(payload: BatchPredictionInput) -> BatchPredictionResponse:
     for index, item in enumerate(payload.items):
         rule_score = rule_scores[index]
         model_score = model_scores.get(index)
-        if item.standardGroupSize != 4:
-            mode = "rule_only"
-            explanation = "standard_group_size_not_supported_by_model"
-        elif not model_runtime.available:
+        if not model_runtime.available:
             mode = "rule_fallback"
             explanation = model_runtime.reason
         elif prediction_failure is not None:

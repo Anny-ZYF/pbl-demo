@@ -105,6 +105,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { confirmWorkload, getWorkload, proposeWorkload } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
+import { isAutoLocked } from '@/utils/assignmentWindow'
 import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey } from '@/utils/workload'
 
 const props = defineProps({
@@ -143,7 +144,10 @@ const canSubmit = computed(() => editable.value && allComplete.value && !saving.
 const canConfirm = computed(() => workload.value?.status === 'PENDING_CONFIRMATION'
   && workload.value.myConfirmation === 'PENDING' && !objections.value.length && !props.readOnly)
 
+const autoLocked = computed(() => isAutoLocked(workload.value?.autoLocked))
+
 const roleHint = computed(() => {
+  if (autoLocked.value) return '截止自动锁定 · 不可编辑'
   if (props.readOnly) return '当前阶段只读'
   if (objections.value.length) return props.isLeader ? '有异议 · 请重新修改' : '待组长重新提交'
   if (!props.isLeader) return '由组长填写，我可确认'
@@ -161,6 +165,9 @@ const statusBanner = computed(() => {
     return props.isLeader ? '尚无分工方案，请由组长填写并提交' : '组长尚未提交工作量分配方案'
   }
   const version = workload.value.versionNo ?? '—'
+  if (workload.value.status === 'LOCKED' && autoLocked.value) {
+    return `第 ${version} 版已在截止时间自动锁定（含未确认成员），评分将采用此版本`
+  }
   if (workload.value.status === 'LOCKED') {
     return `第 ${version} 版已全员确认并锁定，评分将采用此版本`
   }
@@ -170,7 +177,9 @@ const statusBanner = computed(() => {
       : `第 ${version} 版因异议退回，等待组长重新提交`
   }
   if (workload.value.status === 'PENDING_CONFIRMATION') {
-    return `第 ${version} 版等待全员确认 · 我的状态：${confirmationText(workload.value.myConfirmation)}`
+    const pending = workload.value.pendingMembers || []
+    const suffix = pending.length ? ` · 待确认：${pending.join('、')}` : ''
+    return `第 ${version} 版等待全员确认 · 我的状态：${confirmationText(workload.value.myConfirmation)}${suffix}`
   }
   if (workload.value.status === 'SUPERSEDED') {
     return `第 ${version} 版已被新版本替代`
@@ -231,7 +240,9 @@ const emitStatus = () => emit('status', {
   myConfirmation: workload.value?.myConfirmation ?? null,
   versionNo: workload.value?.versionNo ?? null,
   locked: workload.value?.status === 'LOCKED',
+  autoLocked: autoLocked.value,
   objected: objections.value.length > 0,
+  pendingMembers: workload.value?.pendingMembers || [],
   complete: allComplete.value
 })
 

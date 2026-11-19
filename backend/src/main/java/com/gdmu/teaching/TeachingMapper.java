@@ -31,9 +31,18 @@ public interface TeachingMapper {
     @Select("""
             SELECT a.id,a.title,a.description,a.deadline,a.status,a.published_at AS publishedAt,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,a.created_at AS createdAt,
-                   (SELECT COUNT(*) FROM group_table g WHERE g.assignment_id=a.id) AS groupCount,
-                   (SELECT COUNT(*) FROM submission s WHERE s.assignment_id=a.id) AS submissionCount
+                   (SELECT COUNT(*) FROM group_table g WHERE g.assignment_id=a.id
+                      AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')) AS groupCount,
+                   (SELECT COUNT(*) FROM submission s JOIN group_table g ON g.id=s.group_id
+                      WHERE s.assignment_id=a.id AND g.assignment_id=a.id AND s.status <> 'DRAFT') AS submissionCount,
+                   (SELECT COUNT(DISTINCT s.group_id) FROM submission s JOIN group_table g ON g.id=s.group_id
+                      WHERE s.assignment_id=a.id AND g.assignment_id=a.id
+                        AND s.is_latest=1 AND s.status <> 'DRAFT') AS submittedGroupCount,
+                   (SELECT COUNT(DISTINCT s.group_id) FROM submission s JOIN group_table g ON g.id=s.group_id
+                      WHERE s.assignment_id=a.id AND g.assignment_id=a.id
+                        AND s.is_latest=1 AND s.status <> 'DRAFT' AND s.teacher_score IS NULL) AS pendingReviewCount
             FROM assignment a WHERE a.course_id=#{courseId} AND a.teacher_id=#{teacherId}
+              AND a.status<>'ARCHIVED'
             ORDER BY a.created_at DESC
             """)
     List<Map<String, Object>> teacherAssignments(@Param("courseId") long courseId, @Param("teacherId") long teacherId);
@@ -105,6 +114,48 @@ public interface TeachingMapper {
     List<Map<String, Object>> teacherScores(@Param("courseId") long courseId,
                                             @Param("assignmentId") long assignmentId);
 
+    /**
+     * 系统班级库列表（V6 起班级按院系唯一）。enrolledCount 只统计当前课程中
+     * 仍然 ACTIVE 且账号有效的学生，因此 studentCount - enrolledCount 就是
+     * 本次可导入人数；DROPPED 的学生重新导入会被恢复。
+     */
+    @Select("""
+            <script>
+            SELECT c.id,c.name,c.grade,c.department_id AS departmentId,d.name AS departmentName,
+                   (SELECT COUNT(*) FROM student_users s WHERE s.class_id=c.id AND s.status=1) AS studentCount,
+                   (SELECT COUNT(*) FROM student_course sc JOIN student_users s ON s.id=sc.student_id
+                      WHERE sc.course_id=#{courseId} AND sc.status='ACTIVE'
+                        AND s.status=1 AND s.class_id=c.id) AS enrolledCount
+            FROM `class` c LEFT JOIN department d ON d.id=c.department_id
+            WHERE c.status='ACTIVE'
+            <if test='keyword != null and keyword != ""'>
+              AND (c.name LIKE CONCAT('%',#{keyword},'%') OR d.name LIKE CONCAT('%',#{keyword},'%')
+                   OR c.grade LIKE CONCAT('%',#{keyword},'%'))
+            </if>
+            ORDER BY d.name,c.grade,c.name,c.id
+            </script>
+            """)
+    List<Map<String, Object>> importableClasses(@Param("courseId") long courseId,
+                                                @Param("keyword") String keyword);
+
+    @Select("SELECT COUNT(*) FROM `class` WHERE id=#{classId} AND status='ACTIVE'")
+    int activeClass(long classId);
+
+    @Select("""
+            SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,m.name AS majorName,
+                   CASE WHEN sc.status='ACTIVE' THEN TRUE ELSE FALSE END AS enrolled
+            FROM student_users s
+            LEFT JOIN major m ON m.id=s.major_id
+            LEFT JOIN student_course sc ON sc.student_id=s.id AND sc.course_id=#{courseId}
+            WHERE s.class_id=#{classId} AND s.status=1
+            ORDER BY s.student_user_id
+            """)
+    List<Map<String, Object>> classRoster(@Param("classId") long classId,
+                                          @Param("courseId") long courseId);
+
+    @Select("SELECT s.id FROM student_users s WHERE s.class_id=#{classId} AND s.status=1 ORDER BY s.id")
+    List<Long> activeStudentIdsByClass(long classId);
+
     @Select("SELECT id FROM student_users WHERE student_user_id=#{studentNo} AND status=1")
     Long studentIdByNo(String studentNo);
 
@@ -140,6 +191,62 @@ public interface TeachingMapper {
     int insertAssignmentPart(@Param("assignmentId") long assignmentId, @Param("name") String name,
                              @Param("description") String description, @Param("weight") double weight,
                              @Param("sortOrder") int sortOrder);
+
+    @Select("""
+            SELECT a.id,a.title,a.description,a.deadline,a.status,a.published_at AS publishedAt,
+                   a.total_score AS totalScore,a.standard_group_size AS standardGroupSize,
+                   a.course_id AS courseId,
+                   (SELECT COUNT(*) FROM group_table g WHERE g.assignment_id=a.id
+                      AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')) AS groupCount,
+                   (SELECT COUNT(*) FROM submission s JOIN group_table g ON g.id=s.group_id
+                      WHERE s.assignment_id=a.id AND g.assignment_id=a.id AND s.status <> 'DRAFT') AS submissionCount
+            FROM assignment a WHERE a.id=#{assignmentId} AND a.teacher_id=#{teacherId}
+            """)
+    Map<String, Object> teacherAssignmentDetail(@Param("assignmentId") long assignmentId,
+                                                @Param("teacherId") long teacherId);
+
+    @Select("""
+            SELECT id,part_name AS name,part_description AS description,weight,sort_order AS sortOrder
+            FROM assignment_parts WHERE assignment_id=#{assignmentId} ORDER BY sort_order,id
+            """)
+    List<Map<String, Object>> assignmentParts(long assignmentId);
+
+    @Select("""
+            SELECT (SELECT COUNT(*) FROM group_table WHERE assignment_id=#{assignmentId})
+                 + (SELECT COUNT(*) FROM workload_set WHERE assignment_id=#{assignmentId})
+                 + (SELECT COUNT(*) FROM submission WHERE assignment_id=#{assignmentId})
+                 + (SELECT COUNT(*) FROM scoring_run WHERE assignment_id=#{assignmentId})
+            """)
+    int assignmentDependencyCount(long assignmentId);
+
+    @Select("""
+            SELECT (SELECT COUNT(*) FROM submission WHERE assignment_id=#{assignmentId} AND is_score_published=1)
+                 + (SELECT COUNT(*) FROM score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id
+                    WHERE sr.assignment_id=#{assignmentId} AND r.status='PUBLISHED')
+            """)
+    int assignmentPublishedScoreCount(long assignmentId);
+
+    @Select("SELECT deadline FROM assignment WHERE id=#{assignmentId} AND teacher_id=#{teacherId}")
+    LocalDateTime assignmentDeadlineForTeacher(@Param("assignmentId") long assignmentId,
+                                               @Param("teacherId") long teacherId);
+
+    @Update("""
+            UPDATE assignment SET title=#{r.title},description=#{r.description},deadline=#{r.deadline},
+              standard_group_size=#{r.standardGroupSize},total_score=#{r.totalScore},
+              updated_at=CURRENT_TIMESTAMP
+            WHERE id=#{assignmentId} AND teacher_id=#{teacherId} AND status<>'ARCHIVED'
+            """)
+    int updateAssignment(@Param("assignmentId") long assignmentId, @Param("teacherId") long teacherId,
+                         @Param("r") AssignmentUpdateRequest request);
+
+    @Delete("DELETE FROM assignment_parts WHERE assignment_id=#{assignmentId}")
+    int deleteAssignmentParts(long assignmentId);
+
+    @Update("""
+            UPDATE assignment SET status='ARCHIVED',updated_at=CURRENT_TIMESTAMP
+            WHERE id=#{assignmentId} AND teacher_id=#{teacherId} AND status<>'ARCHIVED'
+            """)
+    int archiveAssignment(@Param("assignmentId") long assignmentId, @Param("teacherId") long teacherId);
 
     @Update("""
             UPDATE assignment SET status='PUBLISHED',updated_at=CURRENT_TIMESTAMP
@@ -245,11 +352,19 @@ public interface TeachingMapper {
                    s.content,s.file_path AS filePath,s.submit_note AS note,
                    s.submit_time AS submitTime,s.status,s.teacher_score AS teacherScore,
                    s.teacher_comment AS teacherComment,s.is_score_published AS scorePublished,
+                   COALESCE(leader.name,
+                     (SELECT member.name FROM group_member gm
+                      JOIN student_users member ON member.id=gm.student_id
+                      WHERE gm.group_id=g.id AND gm.status='ACTIVE' AND gm.role='LEADER'
+                      ORDER BY gm.id LIMIT 1)) AS leaderName,
                    (SELECT JSON_ARRAYAGG(JSON_OBJECT('id',sa.id,'storageKey',sa.storage_key,
                            'originalName',sa.original_name,'fileSize',sa.file_size))
                     FROM submission_attachment sa WHERE sa.submission_id=s.id) AS attachments
-            FROM submission s JOIN assignment a ON a.id=s.assignment_id JOIN group_table g ON g.id=s.group_id
+            FROM submission s JOIN assignment a ON a.id=s.assignment_id
+            JOIN group_table g ON g.id=s.group_id AND g.assignment_id=a.id
+            LEFT JOIN student_users leader ON leader.id=g.leader_student_id
             WHERE a.teacher_id=#{teacherId} AND a.id=#{assignmentId} AND s.is_latest=1
+              AND s.status <> 'DRAFT'
             ORDER BY s.submit_time DESC
             """)
     List<Map<String, Object>> submissions(@Param("assignmentId") long assignmentId, @Param("teacherId") long teacherId);
@@ -260,6 +375,7 @@ public interface TeachingMapper {
             JOIN submission s ON s.id=sa.submission_id
             JOIN assignment a ON a.id=s.assignment_id
             WHERE sa.submission_id=#{submissionId} AND a.teacher_id=#{teacherId}
+              AND s.status <> 'DRAFT'
             ORDER BY sa.id
             """)
     List<Map<String, Object>> teacherSubmissionAttachments(@Param("submissionId") long submissionId,
@@ -275,10 +391,12 @@ public interface TeachingMapper {
     @Select("""
             SELECT a.id,a.title,a.description,a.deadline,a.published_at AS publishedAt,a.status,a.total_score AS totalScore,
                    a.standard_group_size AS standardGroupSize,
-                   (a.published_at IS NOT NULL AND CURRENT_TIMESTAMP < DATE_ADD(a.published_at, INTERVAL 2 DAY)) AS teamFormation,
-                   EXISTS(SELECT 1 FROM scoring_run sr WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED') AS scorePublished,
+                   FALSE AS teamFormation,
+                   EXISTS(SELECT 1 FROM scoring_run sr JOIN group_member gm ON gm.group_id=sr.group_id
+                          WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED'
+                            AND gm.student_id=#{studentId} AND gm.status='ACTIVE') AS scorePublished,
                    EXISTS(SELECT 1 FROM submission s JOIN group_member gm ON gm.group_id=s.group_id
-                          WHERE s.assignment_id=a.id AND s.is_latest=1
+                          WHERE s.assignment_id=a.id AND s.is_latest=1 AND s.status <> 'DRAFT'
                             AND gm.student_id=#{studentId} AND gm.status='ACTIVE') AS submitted
             FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id
             WHERE sc.student_id=#{studentId} AND sc.status='ACTIVE' AND a.course_id=#{courseId}
@@ -291,12 +409,18 @@ public interface TeachingMapper {
                    a.standard_group_size AS standardGroupSize,
                    g.id AS groupId,g.name AS groupName,gm.role AS memberRole,
                    sub.content,sub.file_path AS filePath,sub.submit_note AS submitNote,
-                   sub.status AS submissionStatus,sub.teacher_score AS teacherScore,
+                   sub.status AS submissionStatus,sub.submitter_id AS submitterId,
+                   sub.submit_time AS submitTime,sub.teacher_score AS teacherScore,
                    sub.teacher_comment AS teacherComment,
-                   (sub.is_score_published=1 OR EXISTS(SELECT 1 FROM scoring_run sr WHERE sr.assignment_id=a.id AND sr.status='PUBLISHED')) AS scorePublished
+                   (sub.status IS NOT NULL AND sub.status <> 'DRAFT') AS submitted,
+                   (sub.is_score_published=1 OR EXISTS(SELECT 1 FROM scoring_run sr
+                          WHERE sr.assignment_id=a.id AND sr.group_id=g.id AND sr.status='PUBLISHED')) AS scorePublished
             FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id
-            LEFT JOIN group_member gm ON gm.student_id=sc.student_id AND gm.assignment_id=a.id AND gm.status='ACTIVE'
-            LEFT JOIN group_table g ON g.id=gm.group_id AND g.assignment_id=a.id
+            LEFT JOIN group_member gm ON gm.id=(
+                   SELECT MAX(gm2.id) FROM group_member gm2 JOIN group_table gt ON gt.id=gm2.group_id
+                   WHERE gm2.student_id=#{studentId} AND gm2.status='ACTIVE'
+                     AND gt.assignment_id=#{assignmentId} AND gt.team_status NOT IN ('DISSOLVED','ARCHIVED'))
+            LEFT JOIN group_table g ON g.id=gm.group_id
             LEFT JOIN submission sub ON sub.assignment_id=a.id AND sub.group_id=g.id AND sub.is_latest=1
             WHERE a.id=#{assignmentId} AND sc.student_id=#{studentId} AND sc.status='ACTIVE'
               AND a.status IN ('PUBLISHED','CLOSED')
@@ -308,16 +432,36 @@ public interface TeachingMapper {
     @Select("SELECT id,part_name AS name,part_description AS description,weight FROM assignment_parts WHERE assignment_id=#{assignmentId} ORDER BY sort_order,id")
     List<Map<String,Object>> studentAssignmentParts(long assignmentId);
 
-    @Select("SELECT sa.id,sa.storage_key AS storageKey,sa.original_name AS originalName,sa.file_size AS fileSize,sa.created_at AS createdAt FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id JOIN group_member gm ON gm.group_id=s.group_id AND gm.student_id=#{studentId} AND gm.status='ACTIVE' WHERE s.assignment_id=#{assignmentId} AND s.is_latest=1 ORDER BY sa.id")
-    List<Map<String,Object>> studentSubmissionAttachments(@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+    /**
+     * The attachment list is resolved from the same group as the detail view, so members of
+     * a team always see exactly the attachments of their own current submission.
+     */
+    @Select("SELECT sa.id,sa.storage_key AS storageKey,sa.original_name AS originalName,sa.file_size AS fileSize,sa.created_at AS createdAt FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id WHERE s.assignment_id=#{assignmentId} AND s.group_id=#{groupId} AND s.is_latest=1 ORDER BY sa.id")
+    List<Map<String,Object>> studentSubmissionAttachments(@Param("assignmentId") long assignmentId,@Param("groupId") long groupId);
 
-    @Delete("DELETE sa FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id JOIN group_member gm ON gm.group_id=s.group_id AND gm.student_id=#{studentId} AND gm.status='ACTIVE' WHERE sa.id=#{attachmentId} AND s.assignment_id=#{assignmentId} AND s.is_latest=1")
-    int deleteStudentAttachment(@Param("attachmentId") long attachmentId,@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);
+    /**
+     * Attachments stay editable for the whole submission window, including a re-submission
+     * (SUBMITTED/RETURNED). Only graded or published submissions are frozen. The group is
+     * resolved once by TeachingService.studentGroup, so a member cannot remove another
+     * team's attachment.
+     */
+    @Delete("""
+            DELETE sa FROM submission_attachment sa JOIN submission s ON s.id=sa.submission_id
+            WHERE sa.id=#{attachmentId} AND s.assignment_id=#{assignmentId}
+              AND s.group_id=#{groupId} AND s.is_latest=1
+              AND s.status IN ('DRAFT','SUBMITTED','RETURNED')
+              AND COALESCE(s.is_score_published,0)=0 AND s.teacher_score IS NULL
+            """)
+    int deleteStudentAttachment(@Param("attachmentId") long attachmentId,@Param("assignmentId") long assignmentId,@Param("groupId") long groupId);
 
     @Select("SELECT id FROM submission WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND is_latest=1")
     Long latestSubmissionId(@Param("assignmentId") long assignmentId,@Param("groupId") long groupId);
 
-    @Insert("INSERT IGNORE INTO submission_attachment(submission_id,storage_key,original_name,file_size) VALUES(#{submissionId},#{storageKey},#{originalName},#{fileSize})")
+    @Insert("""
+            INSERT INTO submission_attachment(submission_id,storage_key,original_name,file_size)
+            VALUES(#{submissionId},#{storageKey},#{originalName},#{fileSize})
+            ON DUPLICATE KEY UPDATE original_name=VALUES(original_name),file_size=VALUES(file_size)
+            """)
     int insertAttachment(@Param("submissionId") long submissionId,@Param("storageKey") String storageKey,@Param("originalName") String originalName,@Param("fileSize") long fileSize);
 
     @Select("""
@@ -362,9 +506,13 @@ public interface TeachingMapper {
     int nextGroupNo(long assignmentId);
 
     @Select("""
-            SELECT id,name FROM group_table
-            WHERE assignment_id=#{assignmentId} AND team_status='DISSOLVED'
-            ORDER BY CAST(REGEXP_SUBSTR(name, '[0-9]+') AS UNSIGNED),id
+            SELECT g.id,g.name FROM group_table g
+            WHERE g.assignment_id=#{assignmentId} AND g.team_status='DISSOLVED'
+              AND NOT EXISTS (SELECT 1 FROM submission s WHERE s.group_id=g.id)
+              AND NOT EXISTS (SELECT 1 FROM scoring_run sr WHERE sr.group_id=g.id)
+              AND NOT EXISTS (SELECT 1 FROM workload_set ws WHERE ws.group_id=g.id)
+              AND NOT EXISTS (SELECT 1 FROM group_member gm WHERE gm.group_id=g.id AND gm.status='ACTIVE')
+            ORDER BY CAST(REGEXP_SUBSTR(g.name, '[0-9]+') AS UNSIGNED),g.id
             LIMIT 1 FOR UPDATE
             """)
     Map<String,Object> reusableStudentGroup(long assignmentId);
@@ -414,8 +562,9 @@ public interface TeachingMapper {
 
     @Select("""
             SELECT g.id FROM group_table g JOIN group_member gm ON gm.group_id=g.id
-            WHERE g.assignment_id=#{assignmentId} AND gm.student_id=#{studentId} AND gm.status='ACTIVE'
-            LIMIT 1
+            WHERE g.assignment_id=#{assignmentId} AND g.team_status NOT IN ('DISSOLVED','ARCHIVED')
+              AND gm.student_id=#{studentId} AND gm.status='ACTIVE'
+            ORDER BY gm.id DESC LIMIT 1
             """)
     Long studentGroup(@Param("assignmentId") long assignmentId, @Param("studentId") long studentId);
 
@@ -461,9 +610,30 @@ public interface TeachingMapper {
     int upsertSubmission(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId,
                          @Param("studentId") long studentId, @Param("r") StudentSubmissionRequest request);
 
+    @Insert("""
+            INSERT INTO submission(assignment_id,group_id,submitter_id,content,submit_note,submit_time,status,
+              created_at,updated_at)
+            VALUES(#{assignmentId},#{groupId},#{studentId},'',NULL,CURRENT_TIMESTAMP,'DRAFT',
+              CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP
+            """)
+    int ensureDraftSubmission(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId,
+                              @Param("studentId") long studentId);
+
+    @Select("SELECT COUNT(*) FROM submission_attachment WHERE submission_id=#{submissionId}")
+    int attachmentCount(long submissionId);
+
     @Select("SELECT deadline FROM assignment WHERE id=#{assignmentId} AND status='PUBLISHED'")
     LocalDateTime assignmentDeadline(long assignmentId);
 
     @Select("SELECT published_at FROM assignment WHERE id=#{assignmentId} AND status IN ('PUBLISHED','CLOSED')")
     LocalDateTime assignmentPublishedAt(long assignmentId);
+
+    /**
+     * There is no separate team-formation window anymore. Grouping, workload allocation and
+     * submission all share one window: from publication until the assignment deadline.
+     * Returns 1 when the deadline has passed (or is missing), 0 while the window is open.
+     */
+    @Select("SELECT COUNT(*) FROM assignment WHERE id=#{assignmentId} AND (deadline IS NULL OR deadline <= CURRENT_TIMESTAMP)")
+    int expiredAssignmentCount(long assignmentId);
 }

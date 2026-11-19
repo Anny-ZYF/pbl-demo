@@ -2,12 +2,25 @@ from __future__ import annotations
 
 from math import isclose
 
+import pytest
+
 from app.rules import (
-    baseline_score,
+    BOOST_CAP,
+    MAX_SCORE,
+    MIN_SCORE,
+    RULE_VERSION,
+    RuleInputError,
     compute_contributions,
     contribution_threshold,
     individual_score,
+    score_detail,
+    score_group,
 )
+
+
+def test_version_is_the_smoothstep_version() -> None:
+    assert RULE_VERSION == "smoothstep-v1"
+    assert BOOST_CAP == 20.0
 
 
 def test_mcqs_contributions_sum_to_one() -> None:
@@ -22,31 +35,57 @@ def test_mcqs_contributions_sum_to_one() -> None:
     assert isclose(sum(contributions), 1.0)
 
 
-def test_zero_contribution_uses_p4_low_branch_transform() -> None:
-    base = baseline_score(4, 4, 80.0)
-    assert isclose(individual_score(4, 4, 80.0, 0.0), base * 3.0 * 0.12)
+def test_threshold_is_inverse_of_standard_group_size() -> None:
+    assert contribution_threshold(1) == 1.0
+    assert isclose(contribution_threshold(2), 0.5)
+    assert isclose(contribution_threshold(4), 0.25)
 
 
-def test_zero_contribution_without_p4_transform_is_zero() -> None:
-    assert individual_score(3, 3, 80.0, 0.0) == 0.0
+def test_low_branch_uses_smoothstep_of_x_times_p() -> None:
+    detail = score_detail(4, 80.0, 0.1)
+    assert detail.branch == "LOW_CONTRIBUTION"
+    assert isclose(detail.normalized_contribution, 0.4)
+    assert isclose(detail.rule_score, 28.16)
 
 
-def test_threshold_contribution_equals_baseline() -> None:
+def test_high_branch_caps_the_boost_at_b() -> None:
+    detail = score_detail(4, 50.0, 1.0)
+    assert detail.branch == "HIGH_CONTRIBUTION"
+    assert isclose(detail.normalized_contribution, 1.0)
+    assert isclose(detail.rule_score, 50.0 + BOOST_CAP)
+
+
+def test_threshold_is_continuous_across_branches() -> None:
     threshold = contribution_threshold(4)
-    expected = baseline_score(4, 4, 80.0)
-    assert individual_score(4, 4, 80.0, threshold) == expected
+    assert individual_score(4, 80.0, threshold) == pytest.approx(80.0)
+    assert individual_score(4, 80.0, threshold + 1e-9) == pytest.approx(80.0, abs=1e-6)
 
 
-def test_p4_adjustments_apply_to_both_branches() -> None:
-    base = baseline_score(4, 4, 80.0)
-    low_effective = 0.67 * 0.1 + 0.12
-    high_effective = 0.54 * 0.5 + 0.17
-    expected_low = base * 6.0 * low_effective / 2.0
-    expected_high = base + (100.0 - base) * (high_effective * 6.0 - 2.0) / 4.0
-    assert isclose(individual_score(4, 4, 80.0, 0.1), expected_low)
-    assert isclose(individual_score(4, 4, 80.0, 0.5), expected_high)
+def test_p1_never_divides_by_zero() -> None:
+    assert individual_score(1, 100.0, 1.0) == 100.0
+    assert individual_score(1, 50.0, 0.0) == 0.0
 
 
-def test_adjusted_score_is_bounded_to_declared_range() -> None:
-    score = individual_score(4, 4, 100.0, contribution_threshold(4) - 1e-6)
-    assert 0.0 <= score <= 100.0
+def test_scores_are_always_between_zero_and_one_hundred() -> None:
+    for p in range(1, 5):
+        for g in range(0, 101, 5):
+            for step in range(21):
+                score = individual_score(p, float(g), step / 20.0)
+                assert MIN_SCORE <= score <= MAX_SCORE
+    assert individual_score(4, 100.0, 0.9) == 100.0
+    assert individual_score(3, 0.0, 0.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("p", "g", "x"),
+    [(0, 80.0, 0.2), (5, 80.0, 0.2), (4, 101.0, 0.2), (4, -1.0, 0.2), (4, 80.0, 1.2), (4, 80.0, -0.1)],
+)
+def test_invalid_inputs_are_rejected(p: int, g: float, x: float) -> None:
+    with pytest.raises(RuleInputError):
+        individual_score(p, g, x)
+
+
+def test_score_group_works_without_actual_group_size() -> None:
+    results = score_group(2, 60.0, [0.4, 0.6], [[0.75, 0.5], [0.25, 0.5]])
+    assert [round(row.contribution, 4) for row in results] == [0.6, 0.4]
+    assert all(MIN_SCORE <= row.rule_score <= MAX_SCORE for row in results)

@@ -12,7 +12,7 @@
 | 模块 | 状态 | 说明 |
 |---|---|---|
 | Spring Boot 后端 | 完成 | 七大领域：身份认证、教学治理、团队协作、评分、模型治理、审计、文件存储 |
-| Python 算法服务 | 完成 | 论文 MCQS 规则引擎 + XGBoost 推理服务，含训练脚本与模型产物 |
+| Python 算法服务 | 完成 | `smoothstep-v1` 规则引擎 + joblib 格式 XGBoost 推理服务，含训练/制品构建脚本 |
 | 数据库脚本 | 完成 | 空库结构、种子、匿名演示库、旧库迁移四套脚本 |
 | 管理员前端 | 完成 | 5 个必要页面：工作台、组织与账号、教学数据、评分模型、审计日志 |
 | 教师端前端 | 骨架 | 统一登录、布局与路由骨架；业务页面待团队实现 |
@@ -26,8 +26,8 @@
 
 | 测试套件 | 命令 | 状态 |
 |---|---|---|
-| Java 单元/安全/契约测试 | `cd backend && mvn clean test` | 通过（含论文公式边界、MCQS 权重/份额校验、管理员权限隔离、教师跨课程拒绝、登录角色识别、工作量并发确认、评分输入哈希规范化等） |
-| Python 规则/模型/接口测试 | `cd backend/algorithm-service && python -m pytest -q` | 通过（含论文公式等值、1785 条样本、模型指标门槛、Java/Python 跨实现等值、服务超时回退） |
+| Java 单元/安全/契约测试 | `cd backend && mvn clean test` | 通过（含 smoothstep 公式边界、0–100 分数约束、MCQS 权重/份额校验、管理员权限隔离、教师跨课程拒绝、登录角色识别、工作量并发确认、评分输入哈希规范化等） |
+| Python 规则/模型/接口测试 | `cd backend/algorithm-service && python -m pytest -q` | 通过（含 smoothstep 公式等值、40804 条网格样本、模型指标门槛、Java/Python 跨实现等值、服务超时回退、模型输出裁剪） |
 | 前端单元测试 | `cd frontend && npm test -- --run` | 通过 |
 | 前端生产构建 | `cd frontend && npm run build` | 通过 |
 | 数据库空库导入 | 导入 `backend/database/groupwork_schema.sql` + `groupwork_seed.sql` | 通过 |
@@ -35,29 +35,25 @@
 
 ## 模型指标
 
-随仓库交付的 XGBoost 模型已通过准入门槛（RMSE ≤ 1.0、MAE ≤ 0.8、R² ≥ 0.99）。
+随仓库交付的 sklearn `XGBRegressor` 制品已通过准入门槛（RMSE ≤ 1.0、MAE ≤ 0.8、R² ≥ 0.99）。指标由 `scripts/build_artifacts.py` 对交付模型重新计算，不是编造或沿用的旧值。
 
 | 项目 | 值 |
 |---|---|
-| 模型键 | `paper-score-p4` |
-| 版本 | `xgb-p4-seed2025-172a3cf9486e` |
-| 规则版本 | `paper-mcqs-v1` |
-| 标准组规模 `p` | 4 |
-| 适用实际人数 `r` | 1–5 |
-| 特征顺序 | `contribution, actual_group_size, group_score` |
-| 训练数据行数 | 1785 |
-| 训练/测试切分 | 1429 / 356（80/20 分层） |
-| 交叉验证 | 5 折确定性分层 |
-| 随机种子 | 2025 |
-| Holdout RMSE | 0.482899 |
-| Holdout MAE | 0.356837 |
-| Holdout R² | 0.999700 |
-| 5 折 CV RMSE 均值 ± 标准差 | 0.766012 ± 0.045531 |
-| 5 折 CV MAE 均值 ± 标准差 | 0.525321 ± 0.027287 |
-| 5 折 CV R² 均值 ± 标准差 | 0.999259 ± 0.000106 |
+| 模型键 | `smoothstep-score` |
+| 版本 | `smoothstep-xgb-a2b2c30a05b1` |
+| 规则版本 | `smoothstep-v1` |
+| 模型格式 | `joblib-sklearn`（`score-model.joblib`） |
+| 标准组规模 `p` | 1–4 全部适用 |
+| 实际人数 `r` | 不参与公式与特征 |
+| 特征顺序 | `标准人数, 个人贡献度, 作业总分` |
+| 训练数据行数 | 40804（`p` × `x∈[0,1]步长0.01` × `G∈[0,100]整数`） |
+| 训练/测试切分 | 32643 / 8161（`train_test_split`, 80/20, seed 42） |
+| 参数 | `n_estimators=150, max_depth=5, learning_rate=0.07, random_state=42` |
+| Holdout RMSE / MAE / R² | 0.8942731732 / 0.6381276982 / 0.9992094930 |
+| 分数范围 | `[0,100]`，规则分与模型分都裁剪 |
 | 准入状态 | ELIGIBLE |
 
-> 注意：上述指标衡量模型对确定性规则生成标签的拟合程度，不等同于真实教学公平性证明。只有 `p=4` 使用 XGBoost；其他合法组规模仅使用规则分并标注超出模型验证范围。
+> 注意：上述指标衡量模型对确定性规则生成标签的拟合程度，不等同于真实教学公平性证明，也不代表用真实课堂标注数据训练。`joblib` 基于 pickle 序列化，运行时只加载仓库内已登记 SHA-256 的可信制品。
 
 ## 关键工件 SHA-256
 
@@ -65,25 +61,26 @@
 
 | 文件 | SHA-256 | 大小 |
 |---|---|---|
-| `backend/database/groupwork_schema.sql` | `e9593934f8e923d33a198ab3ac34bad098eeb39960cfcbf2a8b2de2bff922d99` | 51,983 B |
-| `backend/database/groupwork_seed.sql` | `6a25c692e83516262bbd1d9d1fc28224ad7b4312ea5b4a645b67782765213c20` | 6,436 B |
-| `backend/database/groupwork_complete.sql` | `2945f2ba24e640c9a2b8eafa21cca622b1b9d44bfba7968fed9d5d18fee59992` | 100,636 B |
-| `backend/database/legacy_migration.sql` | `b554f8e4d500cc881c62b4e7927a33d130820388b514e67e6ccdf7091da79782` | 116,767 B |
+| `backend/database/groupwork_schema.sql` | `da8bd6c7de26908e55e802d7688adbacd5b9c0b833a4964820c2979502dc4aba` | 51,977 B |
+| `backend/database/groupwork_seed.sql` | `cdcf0396c0f9f5b7960100641beb2e5918b78db84b99bf3bc465b8e4de83d161` | 5,961 B |
+| `backend/database/groupwork_complete.sql` | `18c8d4cf8f356254991ed07b22ad55b1a38be82058538fb250fe4b032acf66af` | 100,884 B |
+| `backend/database/legacy_migration.sql` | `b2cda0649d61e3d078dac925bf496b2d9f55bd7180c8749e9a76021e960994dc` | 116,984 B |
 
 ### 模型产物
 
 | 文件 | SHA-256 | 大小 |
 |---|---|---|
-| `backend/algorithm-service/artifacts/xgboost-model.json` | `172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d` | 4,631,746 B |
-| `backend/algorithm-service/artifacts/metadata.json` | `11592152e096882e1e1bb22bbc853c17ef8a9bcc5faf427cc0938df53e327a0e` | 2,692 B |
-| `backend/algorithm-service/artifacts/metrics.json` | `e3aba2733517b300554be3496b6116b31dd309eee1b4d83de13a6f278fac6764` | 1,784 B |
-| `backend/algorithm-service/artifacts/synthetic-samples.csv` | `7e033aef431573642fa5b5d6cc147794647084aa2c3323056e5a39a30081d146` | 127,272 B |
+| `backend/algorithm-service/artifacts/score-model.joblib` | `a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644` | 428,555 B |
+| `backend/algorithm-service/artifacts/metadata.json` | `61a323996c5e1e4d14599541dac9712e7ca488adf12cd4f4918eddbb139f3975` | 1,369 B |
+| `backend/algorithm-service/artifacts/metrics.json` | `4a6d7dec21531c16e8d4d59a04d290567aafb7880f2f54331297337039e4fe95` | 534 B |
+| `backend/algorithm-service/artifacts/score-samples.csv` | `75226d4127c3d534a7b32b0f1653de53b25679c26927d5c0282dba2555932efe` | 2,519,210 B |
+| `backend/algorithm-service/artifacts/sha256.json` | `13fd8fe0cb9bbaee646028917b28c844c3db4f7f45efe262b4ec80f7f055ab25` | 409 B |
 
 ### API 契约
 
 | 文件 | SHA-256 | 大小 |
 |---|---|---|
-| `docs/openapi.json` | `8ab9cd846d2d5294cf7d86eb978b569e7b1599834fae204d0c5d628c8ec11380` | 66,206 B |
+| `docs/openapi.json` | `7ccf069ee6f4f45cad0a6009f50a5616c2cd57f44515a648f6e3b5d2403c63dc` | 85,642 B |
 
 ## 交付目录结构
 

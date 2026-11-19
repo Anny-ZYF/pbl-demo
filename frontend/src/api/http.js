@@ -26,10 +26,26 @@ http.interceptors.request.use((config) => {
 })
 
 http.interceptors.response.use(
-  (response) => unwrapApiResponse(response.data),
-  (error) => {
+  (response) => {
+    // 文件下载要保留响应头，Content-Disposition 里带的是库中的权威文件名
+    if (response.config?.responseType === 'blob') {
+      return { blob: response.data, headers: response.headers }
+    }
+    return unwrapApiResponse(response.data)
+  },
+  async (error) => {
     const status = error.response?.status ?? null
-    const payload = error.response?.data
+    let payload = error.response?.data
+
+    // blob 下载失败时响应体是 Blob，需读回统一响应体才能显示真实错误
+    if (typeof Blob !== 'undefined' && payload instanceof Blob) {
+      try {
+        payload = JSON.parse(await payload.text())
+      } catch {
+        payload = null
+      }
+    }
+
     const message = payload?.message || error.message || '网络请求失败'
 
     if (status === 401) {
@@ -37,11 +53,11 @@ http.interceptors.response.use(
       unauthorizedHandler?.()
     }
 
-    return Promise.reject(new ApiError(message, {
+    throw new ApiError(message, {
       status,
       code: payload?.code,
       details: payload?.data
-    }))
+    })
   }
 )
 

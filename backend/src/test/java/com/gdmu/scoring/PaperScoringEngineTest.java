@@ -43,45 +43,80 @@ class PaperScoringEngineTest {
     }
 
     @Test
-    void appliesPrintedBaselineAtThreshold() {
-        double threshold = 2.0 / 6.0;
-        var score = engine.calculate(4, 4, 80, threshold);
+    void thresholdUsesInverseOfStandardGroupSize() {
+        var score = engine.calculate(4, 80, 0.25);
 
-        assertThat(score.branch()).isEqualTo("BASELINE");
-        assertThat(score.baseline()).isCloseTo(80 + Math.sin(Math.PI * 0.8), within(1e-9));
-        assertThat(score.roundedScore()).isEqualTo(80.59);
+        assertThat(score.threshold()).isCloseTo(0.25, within(1e-12));
+        assertThat(score.branch()).isEqualTo("LOW_CONTRIBUTION");
+        assertThat(score.normalizedContribution()).isCloseTo(1.0, within(1e-12));
+        assertThat(score.roundedScore()).isEqualTo(80.0);
     }
 
     @Test
-    void appliesP4AffineTransformsAcrossLowAndHighIntervals() {
-        var zeroContribution = engine.calculate(4, 4, 80, 0);
-        var fullContribution = engine.calculate(4, 4, 80, 1);
+    void highBranchAddsAtMostTheBoostCap() {
+        var score = engine.calculate(4, 50, 1.0);
 
-        assertThat(zeroContribution.effectiveContribution()).isEqualTo(0.12);
-        assertThat(zeroContribution.roundedScore()).isEqualTo(29.01);
-        assertThat(fullContribution.effectiveContribution()).isCloseTo(0.71, within(1e-12));
-        assertThat(fullContribution.roundedScore()).isEqualTo(91.56);
+        assertThat(score.branch()).isEqualTo("HIGH_CONTRIBUTION");
+        assertThat(score.normalizedContribution()).isCloseTo(1.0, within(1e-12));
+        assertThat(score.roundedScore()).isEqualTo(50.0 + PaperScoringEngine.BOOST_CAP);
     }
 
     @Test
-    void clampsScoresAndRejectsOutOfPaperGroupSize() {
-        assertThat(engine.calculate(3, 3, 100, 1).roundedScore()).isEqualTo(100);
-        assertThatThrownBy(() -> engine.calculate(4, 6, 80, 0.2))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("实际组规模");
+    void p1NeverDividesByZero() {
+        var score = engine.calculate(1, 100, 1.0);
+
+        assertThat(score.branch()).isEqualTo("LOW_CONTRIBUTION");
+        assertThat(score.roundedScore()).isEqualTo(100.0);
     }
 
-    @ParameterizedTest(name = "p={0}, r={1}, f={2}, c={3}")
+    @Test
+    void allScoresStayWithinTheDeclaredRange() {
+        for (int p = 1; p <= 4; p++) {
+            for (int g = 0; g <= 100; g += 5) {
+                for (int x = 0; x <= 20; x++) {
+                    double score = engine.calculate(p, g, x / 20.0).rawScore();
+                    assertThat(score).isBetween(PaperScoringEngine.MIN_SCORE, PaperScoringEngine.MAX_SCORE);
+                }
+            }
+        }
+        // G=100 in the high branch would exceed 100 without the clamp.
+        assertThat(engine.calculate(4, 100, 0.9).rawScore()).isEqualTo(100.0);
+        assertThat(engine.calculate(3, 0, 0).rawScore()).isEqualTo(0.0);
+    }
+
+    @Test
+    void rejectsInputsOutsideDeclaredRanges() {
+        assertThatThrownBy(() -> engine.calculate(0, 80, 0.2))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("标准组规模");
+        assertThatThrownBy(() -> engine.calculate(4, 101, 0.2))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("0到100");
+        assertThatThrownBy(() -> engine.calculate(4, 80, 1.2))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("0到1");
+        assertThatThrownBy(() -> engine.calculate(4, Double.NaN, 0.2))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("0到100");
+    }
+
+    @ParameterizedTest(name = "p={0}, G={1}, x={2} -> {3}")
     @CsvSource({
-            "4, 4, 80, 0, 29.011602690825",
-            "3, 3, 80, 0, 0",
-            "4, 2, 80, 0.62, 93.876137708057",
-            "4, 4, 80, 0.3333333333333333, 80.587785252292",
-            "3, 2, 75, 0.4, 82.071067811865",
-            "4, 5, 100, 0.3, 96.3"
+            "4, 80, 0.1, 28.160000000000",
+            "4, 80, 0.25, 80.000000000000",
+            "4, 80, 0.5, 85.185185185185",
+            "2, 60, 0.6, 62.080000000000",
+            "1, 100, 1.0, 100.000000000000",
+            "3, 0, 0.0, 0.000000000000",
+            "4, 100, 0.9, 100.000000000000",
+            "2, 0, 0.9, 17.920000000000",
+            "3, 75, 0.4, 75.560000000000",
+            "4, 50, 1.0, 70.000000000000"
     })
-    void matchesSharedJavaPythonGoldenVectors(int p, int r, double f, double c, double expected) {
-        assertThat(engine.calculate(p, r, f, c).rawScore()).isCloseTo(expected, within(1e-9));
+    void matchesSharedJavaPythonGoldenVectors(int p, double g, double x, double expected) {
+        assertThat(engine.calculate(p, g, x).rawScore()).isCloseTo(expected, within(1e-9));
+    }
+
+    @Test
+    void ruleVersionIsTheSmoothstepVersion() {
+        assertThat(PaperScoringEngine.RULE_VERSION).isEqualTo("smoothstep-v1");
+        assertThat(engine.calculate(2, 60, 0.6).ruleVersion()).isEqualTo("smoothstep-v1");
     }
 
     private static org.assertj.core.data.Offset<Double> within(double value) {

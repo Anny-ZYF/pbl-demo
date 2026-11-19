@@ -42,7 +42,7 @@ public class ModelClient {
 
     public record ModelBatchRequest(List<ModelItemRequest> items) { }
     public record ModelItemRequest(String studentId, double contribution, int standardGroupSize,
-                                   int actualGroupSize, double groupScore) { }
+                                   double groupScore) { }
     public record ModelBatchResponse(String ruleVersion, String modelVersion, String artifactSha256,
                                      List<ModelItemResponse> items) { }
     public record ModelItemResponse(String studentId, double ruleScore, Double modelScore, double finalSuggestion,

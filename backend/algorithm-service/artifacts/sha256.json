@@ -1,9 +1,9 @@
 {
   "algorithm": "sha256",
   "files": {
-    "metadata.json": "21b81fb76b661cadabeb177505e82d6a6f2d9d0e901f1451732c4c11a4b48ca9",
-    "metrics.json": "36cb7b85185be0a28c2ad4aa76970be3517fb6dca986fbf17a66169460162ea6",
-    "synthetic-samples.csv": "7e033aef431573642fa5b5d6cc147794647084aa2c3323056e5a39a30081d146",
-    "xgboost-model.json": "172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d"
+    "metadata.json": "61a323996c5e1e4d14599541dac9712e7ca488adf12cd4f4918eddbb139f3975",
+    "metrics.json": "4a6d7dec21531c16e8d4d59a04d290567aafb7880f2f54331297337039e4fe95",
+    "score-model.joblib": "a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644",
+    "score-samples.csv": "75226d4127c3d534a7b32b0f1653de53b25679c26927d5c0282dba2555932efe"
   }
 }

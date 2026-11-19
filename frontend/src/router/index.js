@@ -118,10 +118,9 @@ const routes = [
         meta: { title: '成绩查看' }
       },
       {
+        // 旧链接保留可达性：工作台必须带 courseId，统一回课程中心
         path: 'dashboard',
-        name: 'teacher-dashboard',
-        component: () => import('@/views/teacher/TeacherDashboardView.vue'),
-        meta: { title: '教师工作台' }
+        redirect: '/teacher/courses'
       },
       {
         path: 'profile',

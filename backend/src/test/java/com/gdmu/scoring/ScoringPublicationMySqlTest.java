@@ -23,7 +23,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
 
 /** Runs against an explicitly supplied disposable MySQL database; fixtures roll back after each test. */
-@SpringBootTest
+@SpringBootTest(properties = "app.workload.auto-lock-enabled=false")
 @Transactional
 @EnabledIfEnvironmentVariable(named = "GROUPWORK_MYSQL_TEST_URL", matches = ".+")
 class ScoringPublicationMySqlTest {

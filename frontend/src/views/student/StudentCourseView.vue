@@ -55,7 +55,8 @@ const parseDate=value=>{if(!value)return null;const date=new Date(value);return 
 const formatDate=value=>{const date=parseDate(value);return date?date.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}):'未设置'}
 const formatDeadline=value=>{const date=parseDate(value);return date?date.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'未设置'}
 const assignmentState=item=>item.scorePublished?'reviewed':item.submitted?'submitted':'pending'
-const statusText=item=>item.scorePublished?'已批改':item.submitted?'已提交':item.teamFormation?'组队中':'待提交'
+// No separate team-formation phase; teamFormation is kept false for API compatibility.
+const statusText=item=>item.scorePublished?'已批改':item.submitted?'已提交':(item.deadline&&parseDate(item.deadline)<new Date())?'已截止':'待提交'
 const statusClass=item=>`status--${assignmentState(item)}`
 const filterCount=value=>value==='all'?assignments.value.length:assignments.value.filter(item=>assignmentState(item)===value).length
 const openAssignment=id=>router.push(`/student/assignment/${id}`)

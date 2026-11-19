@@ -77,13 +77,12 @@
           </div>
 
           <div id="section-submit">
-            <section v-if="formation" class="card grouping">
+            <section v-if="!reviewed && submissionOpen" class="card grouping">
               <div class="grouping-head">
                 <div>
-                  <h2>作业组队</h2>
-                  <p>组队期结束后才能提交作业</p>
+                  <h2>我的小组</h2>
                 </div>
-                <span>{{ formationDeadline }}</span>
+                <span>提交截止：{{ formatDate(submissionEnd) }}</span>
               </div>
               <template v-if="detail.groupName">
                 <div class="current-group">
@@ -122,26 +121,38 @@
             </section>
 
             <StudentSubmissionPanel
-              v-else-if="!reviewed && detail.groupName"
+              v-if="!reviewed && submissionOpen && detail.groupName"
               :assignment-id="route.params.assignmentId"
               :initial-content="detail.content"
               :initial-note="detail.submitNote"
               :submitted="submitted"
+              :submission-status="detail.submissionStatus"
+              :submitter-name="submitterName"
+              :graded="graded"
               :attachments="detail.attachments"
               @submitted="load"
+              @changed="load"
             />
 
-            <section v-else-if="!reviewed" class="card locked-group">
-              <h2>未加入有效小组</h2>
-              <p>组队期已经结束，当前无法提交作业。请联系任课教师处理小组归属。</p>
+            <section v-if="!reviewed && !submissionOpen" class="card locked-group">
+              <h2>作业已截止</h2>
+              <p>截止时间 {{ formatDate(submissionEnd) }} 已过，小组、工作量分配与作业提交均已锁定；未全员确认的分工版本已由系统按截止时间自动锁定。</p>
+              <template v-if="submitted || detail.attachments?.length">
+                <p class="group-shared-hint">本组共用一份提交，附件对全组成员可见、可下载。</p>
+                <p>{{ detail.submitNote || detail.content || '本次提交暂无说明' }}</p>
+                <button v-for="(file, index) in detail.attachments || []" :key="`closed-${file.id || file.storageKey}`" type="button" @click="download(file, index)">
+                  <span>{{ attachmentDisplayName(file, index) }}</span><small>下载</small>
+                </button>
+              </template>
             </section>
 
-            <section v-else class="card readonly">
+            <section v-if="reviewed" class="card readonly">
               <h2>已提交内容</h2>
               <b>✓ 成绩已发布</b>
+              <p class="group-shared-hint">本组共用一份提交，附件对全组成员可见、可下载。</p>
               <p>{{ detail.submitNote || detail.content || '本次提交暂无说明' }}</p>
-              <button v-for="file in detail.attachments" :key="file.id" type="button" @click="download(file)">
-                <span>{{ file.originalName }}</span><small>下载</small>
+              <button v-for="(file, index) in detail.attachments || []" :key="file.id || file.storageKey" type="button" @click="download(file, index)">
+                <span>{{ attachmentDisplayName(file, index) }}</span><small>下载</small>
               </button>
             </section>
           </div>
@@ -226,8 +237,10 @@ import StudentSubmissionPanel from '@/components/student/StudentSubmissionPanel.
 import { appealScore, createStudentGroup, getAssignment, getAssignmentGroups, getScores, joinStudentGroup, leaveStudentGroup } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
 import { saveRecentProject } from '@/utils/studentRecentProject'
-import { downloadAuthenticatedFile } from '@/utils/downloadFile'
+import { attachmentDisplayName, downloadAuthenticatedFile } from '@/utils/downloadFile'
 import { readStoredUser } from '@/utils/session'
+import { groupSubmitterName, isGroupSubmissionReturned, isGroupSubmitted } from '@/utils/submission'
+import { groupSubmissionStatus, isSubmissionOpen, workloadChecklistHint } from '@/utils/assignmentWindow'
 
 const route = useRoute()
 const router = useRouter()
@@ -244,18 +257,26 @@ const now = ref(Date.now())
 let countdownTimer
 
 const reviewed = computed(() => detail.value?.scorePublished === true || detail.value?.scorePublished === 1)
-const submitted = computed(() => Boolean(detail.value?.submissionStatus || detail.value?.content || detail.value?.attachments?.length))
-const graded = computed(() => reviewed.value || detail.value?.teacherScore != null)
+// One submission per group: the backend resolves the same status for every ACTIVE member.
+const submitted = computed(() => isGroupSubmitted(detail.value))
+const returned = computed(() => isGroupSubmissionReturned(detail.value))
+const submitterName = computed(() => groupSubmitterName(detail.value))
+const graded = computed(() => reviewed.value || detail.value?.teacherScore != null
+  || detail.value?.submissionStatus === 'GRADED')
 const isLeader = computed(() => detail.value?.memberRole === 'LEADER')
-const formationEnd = computed(() => detail.value?.publishedAt
-  ? new Date(new Date(detail.value.publishedAt).getTime() + 2 * 86400000) : null)
-const formation = computed(() => formationEnd.value && now.value < formationEnd.value.getTime())
-const formationDeadline = computed(() => formationEnd.value ? `组队截止：${formatDate(formationEnd.value)}` : '组队时间未设置')
 const submissionEnd = computed(() => detail.value?.deadline ? new Date(detail.value.deadline) : null)
-const submissionOpen = computed(() => !formation.value && submissionEnd.value && now.value < submissionEnd.value.getTime())
+// No formation phase: grouping, workload allocation and submission share one window.
+const submissionOpen = computed(() => isSubmissionOpen(detail.value, now.value))
 const currentScore = computed(() => scores.value.find((item) => Number(item.assignmentId) === Number(route.params.assignmentId)))
-const statusText = computed(() => reviewed.value ? '已批阅' : submitted.value ? '已提交' : formation.value ? '组队中' : submissionOpen.value ? '待提交' : '已截止')
-const statusClass = computed(() => reviewed.value ? 'reviewed' : submitted.value ? 'submitted' : formation.value ? 'forming' : submissionOpen.value ? 'pending' : 'closed')
+const submissionState = computed(() => groupSubmissionStatus({
+  reviewed: reviewed.value,
+  returned: returned.value,
+  submitted: submitted.value,
+  groupName: detail.value?.groupName,
+  submissionOpen: submissionOpen.value
+}))
+const statusText = computed(() => submissionState.value.text)
+const statusClass = computed(() => submissionState.value.tone)
 const assignmentType = computed(() => detail.value?.standardGroupSize ? `${detail.value.standardGroupSize}人作业` : '人数未设置')
 const workloadReadOnly = computed(() => reviewed.value || !submissionOpen.value)
 const currentStudentId = computed(() => {
@@ -263,30 +284,22 @@ const currentStudentId = computed(() => {
   return user?.id ?? user?.userId ?? user?.studentId ?? null
 })
 
-const countdownTarget = computed(() => formation.value ? formationEnd.value : submissionEnd.value)
-const countdownMilliseconds = computed(() => Math.max(0, (countdownTarget.value?.getTime() || 0) - now.value))
+const countdownMilliseconds = computed(() => Math.max(0, (submissionEnd.value?.getTime() || 0) - now.value))
 const countdownText = computed(() => {
   const totalMinutes = Math.ceil(countdownMilliseconds.value / 60000)
-  if (totalMinutes <= 0) return formation.value ? '组队已结束' : '提交已截止'
+  if (totalMinutes <= 0) return '提交已截止'
   const hours = Math.floor(totalMinutes / 60)
   return `${hours} 小时 ${totalMinutes % 60} 分钟`
 })
-const countdownTitle = computed(() => formation.value ? '距离组队结束' : submissionOpen.value ? '距离提交截止' : '作业提交已截止')
-const countdownDescription = computed(() => formation.value
-  ? `请在 ${formatDate(formationEnd.value)} 前完成组队`
-  : submissionOpen.value ? `请在 ${formatDate(submissionEnd.value)} 前完成提交` : `截止时间：${formatDate(submissionEnd.value)}`)
-const deadlineBannerClass = computed(() => formation.value ? 'deadline-banner--formation' : submissionOpen.value ? 'deadline-banner--submission' : 'deadline-banner--closed')
+const countdownTitle = computed(() => submissionOpen.value ? '距离提交截止' : '作业提交已截止')
+const countdownDescription = computed(() => submissionOpen.value
+  ? `请在 ${formatDate(submissionEnd.value)} 前完成组队、分工与提交`
+  : `截止时间：${formatDate(submissionEnd.value)}，小组、分工与提交均已锁定`)
+const deadlineBannerClass = computed(() => submissionOpen.value ? 'deadline-banner--submission' : 'deadline-banner--closed')
 
-const workloadHint = computed(() => {
-  const status = workloadStatus.value
-  if (!status) return '加载中'
-  if (status.locked) return '已全员确认并锁定'
-  if (status.objected) return status.myConfirmation === 'OBJECTED' ? '已提异议，待组长重提' : '有成员异议，待组长重提'
-  if (!status.hasVersion) return '尚未填写分工'
-  if (status.myConfirmation === 'CONFIRMED') return '我已确认，等待其他成员'
-  if (status.myConfirmation === 'OBJECTED') return '我已提出异议'
-  return '等待我确认'
-})
+const workloadHint = computed(() => detail.value?.groupName
+  ? workloadChecklistHint(workloadStatus.value)
+  : '尚未加入小组')
 
 const steps = computed(() => [
   { key: 'brief', index: '1', label: '作业要求', hint: `${detail.value?.parts?.length || 0} 个评价分支`, target: 'section-brief' },
@@ -306,8 +319,8 @@ const goTo = (step) => {
   document.getElementById(step.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 const onWorkloadStatus = (status) => { workloadStatus.value = status }
-const download = async (file) => {
-  try { await downloadAuthenticatedFile(file) } catch (error) { ElMessage.error(getErrorMessage(error, '文件下载失败')) }
+const download = async (file, index) => {
+  try { await downloadAuthenticatedFile(file, index) } catch (error) { ElMessage.error(getErrorMessage(error, '文件下载失败')) }
 }
 
 const load = async () => {
@@ -321,7 +334,9 @@ const load = async () => {
   })
   const [scoreRows, groupRows] = await Promise.all([
     getScores(),
-    formation.value ? getAssignmentGroups(route.params.assignmentId) : Promise.resolve([])
+    submissionOpen.value && !detail.value.groupName
+      ? getAssignmentGroups(route.params.assignmentId)
+      : Promise.resolve([])
   ])
   scores.value = scoreRows
   groups.value = groupRows
@@ -352,11 +367,18 @@ const submitAppeal = async () => {
   }
 }
 
+// The submission is shared by the whole group: refresh when the tab regains focus
+// so another member's submit is reflected without a manual page reload.
+const refreshOnFocus = () => { load().catch(() => {}) }
 onMounted(() => {
   countdownTimer = window.setInterval(() => { now.value = Date.now() }, 1000)
+  window.addEventListener('focus', refreshOnFocus)
   load().catch((error) => { errorMessage.value = getErrorMessage(error, '作业详情加载失败') })
 })
-onBeforeUnmount(() => window.clearInterval(countdownTimer))
+onBeforeUnmount(() => {
+  window.clearInterval(countdownTimer)
+  window.removeEventListener('focus', refreshOnFocus)
+})
 </script>
 
 <style scoped>
@@ -413,7 +435,6 @@ onBeforeUnmount(() => window.clearInterval(countdownTimer))
 }
 
 .pending { color: #d58a31; background: #fff3df; }
-.forming { color: #5279d2; background: #edf3ff; }
 .submitted { color: #2f9b70; background: #eaf8f1; }
 .reviewed { color: #477cdc; background: #ebf2ff; }
 .closed { color: #a4534d; background: #fff0ef; }
@@ -448,7 +469,6 @@ onBeforeUnmount(() => window.clearInterval(countdownTimer))
   border-radius: 11px;
   font-size: 12px;
 }
-.deadline-banner--formation { border-color: #bfd1f5; color: #426fc9; background: #edf3ff; }
 .deadline-banner--submission { border-color: #b9dfca; color: #28815c; background: #edf9f2; }
 .deadline-banner--closed { border-color: #e3c9c7; color: #a4534d; background: #fff3f2; }
 
@@ -705,11 +725,28 @@ onBeforeUnmount(() => window.clearInterval(countdownTimer))
 .available-groups button:disabled,
 .primary-button:disabled,
 .danger-button:disabled { opacity: .5; cursor: not-allowed; }
-.locked-group p { margin: 0; color: #7b899b; font-size: 13px; line-height: 1.7; }
+.locked-group p { margin: 0 0 10px; color: #7b899b; font-size: 13px; line-height: 1.7; }
+.locked-group .group-shared-hint { color: #5a78b8; font-size: 11px; }
+.locked-group button {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e2e9f2;
+  border-radius: 8px;
+  color: #526fbd;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.locked-group button small { color: #8795a7; }
 
 .readonly { display: grid; gap: 10px; }
 .readonly > b { padding: 12px; border-radius: 8px; color: #2e9870; background: #ebf8f2; }
 .readonly p { margin: 0; color: #718198; font-size: 12px; }
+.readonly .group-shared-hint { color: #5a78b8; font-size: 11px; }
 .readonly button {
   display: flex;
   justify-content: space-between;

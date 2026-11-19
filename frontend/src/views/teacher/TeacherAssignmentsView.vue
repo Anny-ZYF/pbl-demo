@@ -5,30 +5,31 @@
     <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
     <div class="toolbar"><div class="search-box"><el-icon><Search /></el-icon><input v-model="keyword" placeholder="搜索作业名称" /></div><div class="filters"><button v-for="item in filters" :key="item.value" :class="{ active: statusFilter === item.value }" type="button" @click="statusFilter = item.value">{{ item.label }}</button></div></div>
     <div v-if="loading" class="loading-box">正在加载作业数据…</div>
-    <div v-else-if="filteredAssignments.length" class="assignment-grid"><article v-for="item in filteredAssignments" :key="item.id" class="assignment-card"><div class="card-top"><span class="assignment-type">作业 {{ assignmentIndex(item) }}</span><span class="status" :class="statusClass(item)">{{ statusLabel(item) }}</span></div><h2>{{ item.title || '未命名作业' }}</h2><p class="description">{{ item.description || '暂无作业说明，点击查看作业详情。' }}</p><div class="deadline"><el-icon><Calendar /></el-icon><span>截止日期</span><strong>{{ formatDate(item.deadline) }}</strong></div><div class="progress-label"><span>提交进度</span><b>{{ progress(item) }}%</b></div><div class="progress-track"><span :style="{ width: `${progress(item)}%` }"></span></div><div class="card-meta"><span>{{ item.submissionCount ?? 0 }} / {{ item.groupCount || 0 }} 份提交</span><div><button type="button" @click="router.push(`/teacher/course/${courseId}/assignments/${item.id}/grading`)">批改作业</button><button type="button" @click="openDetail(item)">查看详情 ›</button></div></div></article></div>
+    <div v-else-if="filteredAssignments.length" class="assignment-grid"><article v-for="item in filteredAssignments" :key="item.id" class="assignment-card"><div class="card-top"><span class="assignment-type">作业 {{ assignmentIndex(item) }}</span><span class="status" :class="statusClass(item)">{{ statusLabel(item) }}</span></div><h2>{{ item.title || '未命名作业' }}</h2><p class="description">{{ item.description || '暂无作业说明，点击查看作业详情。' }}</p><div class="deadline"><el-icon><Calendar /></el-icon><span>截止日期</span><strong>{{ formatDate(item.deadline) }}</strong></div><div class="progress-label"><span>提交进度</span><b>{{ progress(item) }}%</b></div><div class="progress-track"><span :style="{ width: `${progress(item)}%` }"></span></div><div class="card-meta"><span>{{ item.submittedGroupCount ?? 0 }} / {{ item.groupCount || 0 }} 组已提交</span><div><button type="button" @click="router.push(`/teacher/course/${courseId}/assignments/${item.id}/grading`)">批改作业</button><button type="button" @click="openDetail(item)">查看详情 ›</button></div></div></article></div>
     <el-empty v-else description="暂无符合条件的作业" />
-    <el-dialog v-model="detailVisible" title="作业详情" width="520px"><template v-if="selectedAssignment"><div class="detail-header"><span class="assignment-type">作业 {{ assignmentIndex(selectedAssignment) }}</span><span class="status" :class="statusClass(selectedAssignment)">{{ statusLabel(selectedAssignment) }}</span></div><h2>{{ selectedAssignment.title }}</h2><p class="detail-copy">{{ selectedAssignment.description || '暂无作业说明' }}</p><div class="detail-row"><span>截止日期</span><strong>{{ formatDate(selectedAssignment.deadline) }}</strong></div><div class="detail-row"><span>团队数量</span><strong>{{ selectedAssignment.groupCount || 0 }} 个</strong></div><div class="detail-row"><span>已提交</span><strong>{{ selectedAssignment.submissionCount || 0 }} 份</strong></div></template></el-dialog>
+    <AssignmentDetailDialog v-model="detailVisible" :assignment-id="selectedAssignmentId" @saved="load" @deleted="load" />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElDialog, ElEmpty, ElIcon, ElMessage } from 'element-plus'
+import { ElEmpty, ElIcon } from 'element-plus'
 import { Calendar, Search } from '@element-plus/icons-vue'
 import { getAssignments, getCourses } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
+import { assignmentProgress as progress } from '@/utils/teacherDashboard'
+import AssignmentDetailDialog from '@/components/teacher/AssignmentDetailDialog.vue'
 const route = useRoute(); const router = useRouter(); const courseId = route.params.courseId
-const assignments = ref([]); const courses = ref([]); const loading = ref(false); const errorMessage = ref(''); const keyword = ref(''); const statusFilter = ref('all'); const detailVisible = ref(false); const selectedAssignment = ref(null)
+const assignments = ref([]); const courses = ref([]); const loading = ref(false); const errorMessage = ref(''); const keyword = ref(''); const statusFilter = ref('all'); const detailVisible = ref(false); const selectedAssignmentId = ref(null)
 const course = computed(() => courses.value.find((item) => String(item.id) === String(courseId)))
 const filters = [{ label: '全部', value: 'all' }, { label: '进行中', value: 'active' }, { label: '已结束', value: 'closed' }]
 const filteredAssignments = computed(() => assignments.value.filter((item) => { const matchesKeyword = !keyword.value || (item.title || '').toLowerCase().includes(keyword.value.toLowerCase()); const closed = item.status === 'CLOSED' || (item.deadline && new Date(item.deadline) < new Date()); return matchesKeyword && (statusFilter.value === 'all' || (statusFilter.value === 'closed' ? closed : !closed)) }))
-const progress = (item) => { const total = Number(item.groupCount || 0); return total ? Math.min(100, Math.round(Number(item.submissionCount || 0) / total * 100)) : 0 }
 const assignmentIndex = (item) => assignments.value.findIndex((entry) => entry.id === item.id) + 1
 const statusLabel = (item) => item.status === 'CLOSED' || (item.deadline && new Date(item.deadline) < new Date()) ? '已结束' : '进行中'
 const statusClass = (item) => statusLabel(item) === '已结束' ? 'closed' : 'active'
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('zh-CN') : '未设置'
-const openDetail = (item) => { selectedAssignment.value = item; detailVisible.value = true }
+const openDetail = (item) => { selectedAssignmentId.value = item.id; detailVisible.value = true }
 const load = async () => { loading.value = true; try { [courses.value, assignments.value] = await Promise.all([getCourses(), getAssignments(courseId)]) } catch (error) { errorMessage.value = getErrorMessage(error, '作业数据加载失败，请稍后重试') } finally { loading.value = false } }
 onMounted(load)
 </script>

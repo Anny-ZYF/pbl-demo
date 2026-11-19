@@ -6,6 +6,7 @@
 *.jpeg binary
 *.pdf binary
 *.zip binary
+*.joblib binary
 # Node
 node_modules/
 **/node_modules/

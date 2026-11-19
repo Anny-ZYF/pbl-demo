@@ -56,6 +56,9 @@ public class ScoringService {
     @Transactional
     public Map<String, Object> createWorkload(UserPrincipal teacher, long assignmentId, long groupId,
                                                WorkloadAllocationRequest request) {
+        // Students are frozen at the deadline, but the teacher keeps an escape hatch: a group that
+        // never submitted a workload version would otherwise be impossible to score. Any version
+        // created after the deadline is locked by the same auto-lock path (sweeper + lazy read).
         require(mapper.teacherOwnsGroup(groupId, assignmentId, teacher.id()) == 1, HttpStatus.NOT_FOUND,
                 "团队不存在或不属于当前教师的作业");
         return persistWorkload(teacher, assignmentId, groupId, request, true);
@@ -66,6 +69,7 @@ public class ScoringService {
                                                WorkloadAllocationRequest request) {
         require(mapper.studentLeadsGroup(groupId, assignmentId, student.id()) == 1, HttpStatus.FORBIDDEN,
                 "只有该团队组长可以提交工作量分配方案");
+        requireWorkloadOpen(assignmentId);
         return persistWorkload(student, assignmentId, groupId, request, false);
     }
 
@@ -109,16 +113,68 @@ public class ScoringService {
     }
 
     public Map<String, Object> studentWorkload(UserPrincipal student, long assignmentId) {
+        autoLockExpired(assignmentId);
         Map<String, Object> summary = mapper.studentWorkload(assignmentId, student.id());
         if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前没有待确认的工作量分配");
         long setId = ((Number) summary.get("id")).longValue();
         Map<String, Object> response = new LinkedHashMap<>(summary);
         response.put("items", mapper.workloadItems(setId));
         response.put("objections", mapper.workloadObjections(setId));
+        List<Map<String, Object>> confirmations = mapper.workloadConfirmations(setId);
+        response.put("confirmations", confirmations);
+        response.put("pendingMembers", pendingMembers(confirmations));
         return response;
     }
 
+    /** Names of members who have not confirmed yet, so the UI can explain why a set is not locked. */
+    private List<String> pendingMembers(List<Map<String, Object>> confirmations) {
+        if (confirmations == null || confirmations.isEmpty()) return List.of();
+        return confirmations.stream()
+                .filter(row -> !"CONFIRMED".equals(String.valueOf(row.get("status"))))
+                .map(row -> String.valueOf(row.get("studentName")))
+                .toList();
+    }
+
+    // ---- Deadline window and auto-lock -------------------------------------
+
+    /** There is no team-formation phase: the workload window is publication .. deadline. */
+    private void requireWorkloadOpen(long assignmentId) {
+        require(mapper.expiredAssignmentCount(assignmentId) == 0, HttpStatus.CONFLICT,
+                "作业已截止，工作量分配已自动锁定");
+    }
+
+    private void requireConfirmationOpen(long setId) {
+        require(mapper.expiredWorkloadSetCount(setId) == 0, HttpStatus.CONFLICT,
+                "作业已截止，工作量分配已自动锁定，不能再确认或提出异议");
+    }
+
+    /**
+     * At the deadline, freeze each group's newest still-open workload version even when some
+     * members never confirmed. Older versions are superseded so scoring sees exactly one LOCKED
+     * snapshot per group. Groups that never submitted a version are deliberately left alone:
+     * the system does not invent contribution data for them.
+     */
+    public int autoLockExpired(long assignmentId) {
+        if (mapper.expiredAssignmentCount(assignmentId) == 0) return 0;
+        List<Long> setIds = mapper.expiredOpenWorkloadSetIds(assignmentId);
+        for (Long setId : setIds) {
+            mapper.supersedeOtherWorkloadSets(setId);
+            mapper.autoLockWorkloadSet(setId);
+        }
+        return setIds.size();
+    }
+
+    @Transactional
+    public int autoLockAllExpired() {
+        int locked = 0;
+        for (Long assignmentId : mapper.assignmentsWithExpiredOpenWorkloads()) {
+            locked += autoLockExpired(assignmentId);
+        }
+        return locked;
+    }
+
     public Map<String, Object> teacherWorkload(UserPrincipal teacher, long assignmentId, long groupId) {
+        autoLockExpired(assignmentId);
         Map<String, Object> summary = mapper.teacherWorkload(assignmentId, groupId, teacher.id());
         if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前团队尚无工作量分配版本");
         long setId = ((Number) summary.get("id")).longValue();
@@ -130,6 +186,7 @@ public class ScoringService {
 
     @Transactional
     public void confirmWorkload(UserPrincipal student, long setId, WorkloadConfirmationRequest request) {
+        requireConfirmationOpen(setId);
         String status = request.status().trim().toUpperCase(Locale.ROOT);
         require(status.equals("CONFIRMED") || status.equals("OBJECTED"), HttpStatus.BAD_REQUEST,
                 "确认状态只能是 CONFIRMED 或 OBJECTED");
@@ -155,20 +212,32 @@ public class ScoringService {
         if (context == null) throw new BusinessException(HttpStatus.NOT_FOUND, "提交不存在或不属于当前教师");
         require(context.groupScore() != null, HttpStatus.CONFLICT, "请先录入团队作品分");
         require(context.scoringRuleId() != null, HttpStatus.CONFLICT, "没有可用的评分规则版本");
+        // Deadline auto-lock is also applied lazily here, so scoring never depends on the
+        // background sweeper having run first.
+        autoLockExpired(context.assignmentId());
         Long workloadSetId = mapper.lockedWorkloadSet(context.assignmentId(), context.groupId());
-        require(workloadSetId != null, HttpStatus.CONFLICT, "工作量分配尚未得到全员确认并锁定");
+        if (workloadSetId == null) {
+            Long latestSetId = mapper.latestWorkloadSetId(context.assignmentId(), context.groupId());
+            List<String> pending = latestSetId == null ? List.of()
+                    : pendingMembers(mapper.workloadConfirmations(latestSetId));
+            String detail = latestSetId == null
+                    ? "（该小组尚未填写分工，截止后没有可自动锁定的版本，请教师补录后再评分）"
+                    : pending.isEmpty() ? "（尚无全员确认的分工版本）"
+                    : "（仍未确认：" + String.join("、", pending) + "）";
+            throw new BusinessException(HttpStatus.CONFLICT,
+                    "工作量分配尚未得到全员确认并锁定" + detail);
+        }
         List<PartRow> parts = mapper.parts(context.assignmentId());
         List<AllocationRow> allocationRows = mapper.allocations(workloadSetId);
         List<MemberRow> members = mapper.members(context.groupId());
         List<PaperScoringEngine.Branch> branches = buildBranches(parts, allocationRows, members);
         List<PaperScoringEngine.MemberContribution> contributions = engine.contributions(branches);
 
-        ActiveModelRow activeModel = context.standardGroupSize() == 4 ? mapper.activeModel() : null;
+        ActiveModelRow activeModel = mapper.activeModel();
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("assignmentId", context.assignmentId());
         inputSnapshot.put("groupId", context.groupId());
         inputSnapshot.put("standardGroupSize", context.standardGroupSize());
-        inputSnapshot.put("actualGroupSize", context.actualGroupSize());
         inputSnapshot.put("groupScore", context.groupScore());
         inputSnapshot.put("parts", parts);
         inputSnapshot.put("allocations", allocationRows);
@@ -184,7 +253,7 @@ public class ScoringService {
 
         List<ModelClient.ModelItemRequest> modelRequests = contributions.stream().map(c ->
                 new ModelClient.ModelItemRequest(String.valueOf(c.studentId()), c.contribution(),
-                        context.standardGroupSize(), context.actualGroupSize(), context.groupScore())).toList();
+                        context.standardGroupSize(), context.groupScore())).toList();
         Optional<ModelClient.ModelBatchResponse> modelResponse = activeModel == null
                 ? Optional.empty() : modelClient.predict(modelRequests).filter(response -> modelMatches(response, activeModel, contributions));
         Map<String, ModelClient.ModelItemResponse> predictions = modelResponse
@@ -192,40 +261,39 @@ public class ScoringService {
                         Function.identity()))).orElseGet(Map::of);
 
         for (PaperScoringEngine.MemberContribution contribution : contributions) {
-            PaperScoringEngine.Score ruleScore = engine.calculate(context.standardGroupSize(), context.actualGroupSize(),
+            PaperScoringEngine.Score ruleScore = engine.calculate(context.standardGroupSize(),
                     context.groupScore(), contribution.contribution());
             ModelClient.ModelItemResponse prediction = predictions.get(String.valueOf(contribution.studentId()));
             Double modelScore = prediction == null ? null : validScore(prediction.modelScore());
             Double delta = modelScore == null ? null : round2(Math.abs(modelScore - ruleScore.roundedScore()));
             boolean anomaly = delta != null && delta > 2.0;
-            double suggestion = modelScore == null ? ruleScore.roundedScore() : modelScore;
-            String mode = prediction == null
-                    ? (context.standardGroupSize() == 4 ? "rule_fallback" : "rule_only") : "model";
+            double suggestion = Math.max(PaperScoringEngine.MIN_SCORE, Math.min(PaperScoringEngine.MAX_SCORE,
+                    modelScore == null ? ruleScore.roundedScore() : modelScore));
+            String mode = prediction == null ? "rule_fallback" : "model";
             Map<String, Object> featureMap = new LinkedHashMap<>();
             featureMap.put("contribution", contribution.contribution());
             featureMap.put("standardGroupSize", context.standardGroupSize());
-            featureMap.put("actualGroupSize", context.actualGroupSize());
             featureMap.put("groupScore", context.groupScore());
             String featureJson = canonicalJson(featureMap);
             mapper.insertSnapshot(runId, contribution.studentId(), contribution.contribution(),
-                    context.standardGroupSize(), context.actualGroupSize(), context.groupScore(),
+                    context.standardGroupSize(), context.groupScore(),
                     featureJson, inputJson, sha256(featureJson));
 
             Map<String, Object> explanation = new LinkedHashMap<>();
             explanation.put("ruleVersion", ruleScore.ruleVersion());
             explanation.put("branch", ruleScore.branch());
-            explanation.put("baseline", round6(ruleScore.baseline()));
             explanation.put("threshold", round6(ruleScore.threshold()));
-            explanation.put("contribution", round6(ruleScore.contribution()));
-            explanation.put("effectiveContribution", round6(ruleScore.effectiveContribution()));
-            explanation.put("p4AffineTransformApplied", ruleScore.withinPaperModelScope());
+            explanation.put("contribution", round6(contribution.contribution()));
+            explanation.put("normalizedContribution", round6(ruleScore.normalizedContribution()));
+            explanation.put("boostCap", PaperScoringEngine.BOOST_CAP);
+            explanation.put("scoreRange", List.of(PaperScoringEngine.MIN_SCORE, PaperScoringEngine.MAX_SCORE));
             explanation.put("mode", mode);
             explanation.put("modelExplanation", prediction == null ? null : safeExplanation(prediction.explanation()));
-            explanation.put("assumption", "Printed paper formula; p=4 affine transforms apply to the full corresponding intervals");
+            explanation.put("assumption", "smoothstep rule (1108.py): threshold=1/p, B=20, score clipped to [0,100]");
             mapper.insertResult(runId, contribution.studentId(), contribution.contribution(), context.groupScore(),
                     ruleScore.roundedScore(), modelScore, delta, anomaly, suggestion, json(explanation));
         }
-        String status = context.standardGroupSize() == 4 && modelResponse.isEmpty() ? "DEGRADED" : "MODEL_COMPLETE";
+        String status = modelResponse.isEmpty() ? "DEGRADED" : "MODEL_COMPLETE";
         String error = status.equals("DEGRADED") ? "模型未激活、不可用或版本不匹配，已采用确定性规则结果" : null;
         mapper.completeRun(runId, status, error);
         auditService.record(teacher, "SCORING_RUN_COMPLETED", "SCORING_RUN", runId,
@@ -257,6 +325,11 @@ public class ScoringService {
                 "复核结果必须与本次运行的成员成绩一一对应");
         List<Map<String, Object>> auditDecisions = new ArrayList<>();
         for (var decision : request.decisions()) {
+            double reviewedScore = decision.finalScore();
+            require(Double.isFinite(reviewedScore)
+                            && reviewedScore >= PaperScoringEngine.MIN_SCORE
+                            && reviewedScore <= PaperScoringEngine.MAX_SCORE,
+                    HttpStatus.BAD_REQUEST, "最终成绩必须在0到100之间");
             Double suggested = mapper.currentSuggestedScore(decision.scoreResultId(), runId);
             require(suggested != null, HttpStatus.NOT_FOUND, "成绩结果不存在");
             if (Math.abs(suggested - decision.finalScore()) > 0.005) {
@@ -329,7 +402,9 @@ public class ScoringService {
         require(status.equals("ACCEPTED") || status.equals("REJECTED"), HttpStatus.BAD_REQUEST,
                 "申诉结论只能是 ACCEPTED 或 REJECTED");
         if (status.equals("ACCEPTED")) {
-            require(request.adjustedScore() != null && request.adjustedScore() >= 0 && request.adjustedScore() <= 100,
+            require(request.adjustedScore() != null && Double.isFinite(request.adjustedScore())
+                            && request.adjustedScore() >= PaperScoringEngine.MIN_SCORE
+                            && request.adjustedScore() <= PaperScoringEngine.MAX_SCORE,
                     HttpStatus.BAD_REQUEST, "接受申诉时必须提供0到100之间的调整后成绩");
         }
         Double previousScore = mapper.effectiveScoreForAppeal(appealId, teacher.id());

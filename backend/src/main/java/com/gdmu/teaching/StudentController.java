@@ -73,6 +73,14 @@ public class StudentController {
         return ApiResponse.ok(service.studentGroupMembers(student, groupId));
     }
 
+    @PostMapping("/assignments/{assignmentId}/draft-attachments")
+    public ApiResponse<Void> registerDraftAttachment(@AuthenticationPrincipal UserPrincipal student,
+                                                     @PathVariable long assignmentId,
+                                                     @Valid @RequestBody DraftAttachmentRequest request) {
+        service.registerDraftAttachment(student, assignmentId, request);
+        return ApiResponse.created(null);
+    }
+
     @PostMapping("/assignments/{assignmentId}/submission")
     public ApiResponse<Void> submit(@AuthenticationPrincipal UserPrincipal student, @PathVariable long assignmentId,
                                     @Valid @RequestBody StudentSubmissionRequest request) {

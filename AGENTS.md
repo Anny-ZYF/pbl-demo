@@ -8,13 +8,13 @@
 - 管理员只负责组织账号、教学数据治理、模型版本、评分运行异常和审计，不代替教师创建团队、评分或发布成绩。
 - 当前管理员前端已实现；教师端、学生端仅保留可运行骨架，后续成员应在现有路由、API 和样式规范上扩展。
 - 后端是三个角色共用的完整业务底座。不得为了某个新页面绕过权限、快照、状态机或审计。
-- 核心算法是 MCQS 贡献量化 + 论文确定性公式 + 可选 XGBoost 建议分。模型不是唯一真相源，教师复核后才能发布。
+- 核心算法是 MCQS 贡献量化 + `smoothstep-v1` 确定性分段公式 + 覆盖 `p=1..4` 的可选 XGBoost 建议分（规则版本见 `docs/SCORING_ALGORITHM.md`）。模型不是唯一真相源，教师复核后才能发布。
 
 ## 2. 技术栈与目录
 
 - `backend/src/`：Java 21、Spring Boot 3.5、Spring Security、JWT、MyBatis、Flyway、MySQL 8。
 - `frontend/`：Vue 3、Vite、Pinia、Element Plus、Axios。
-- `backend/algorithm-service/`：Python 3.11、FastAPI、可选 XGBoost；没有模型依赖时仍必须能提供规则回退。
+- `backend/algorithm-service/`：Python 3.11、FastAPI、joblib 格式的 sklearn XGBRegressor；运行时依赖 `numpy/pandas/scikit-learn/joblib/xgboost`，模型依赖缺失或制品哈希不符时仍必须能提供规则回退。
 - `backend/database/`：空库结构、最小种子、保留数据的完整交接脚本、旧库迁移脚本。
 - `docs/`：系统、算法、API、部署与团队交接文档。
 
@@ -47,12 +47,12 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 1. 作业评价分支权重 `W` 必须非负且总和为 1。
 2. 对每个评价分支，团队成员工作量份额 `Q` 必须非负且总和为 1；不要校验成“每名学生跨分支总和为 1”。
 3. 个人贡献为 `C = QW^T`，同组贡献之和应为 1。
-4. 论文模式标准人数 `p` 为 1–4，实际人数 `r` 为 1–`p+1`。
-5. 规则版本 `paper-mcqs-v1` 按论文印刷公式实现。`p=4` 时，高低贡献区间分别使用 `0.54c+0.17`、`0.67c+0.12`，并覆盖各自完整区间；因此 `p=4,c=0` 也走低区间变换。该点是系统对论文歧义的显式版本假设。
-6. `p=4` 以外仅给规则结果，并标注超出论文模型验证范围，不得伪称 XGBoost 已验证。
-7. XGBoost 的 HTTP 输入包含 `p` 作为适用范围门控；实际 p=4 模型特征为 `[contribution, actual_group_size, group_score]`。
-8. 模型失败、未激活、超时或版本不匹配时必须回退规则结果。模型分与规则分差值严格大于 2 分时标记异常。
-9. 任何评分都要保存输入快照、输入哈希、规则分、模型分、最终分、规则版本、模型版本和解释；不得覆盖已发布历史。
+4. 标准人数 `p` 为 1–4；实际人数 `r` 只作为团队事实保留在历史列中，**不参与新公式、模型特征或 HTTP 请求**。活跃评分链路不再写入 `actual_group_size`。
+5. 规则版本 `smoothstep-v1` 按 `1108.py` 实现：`S(t)=3t²−2t³`、`a=1/p`；`x<=a` 时 `t=x·p, score=G·S(t)`；`x>a` 时 `t=(x−a)/(1−a), score=G+20·S(t)`；结果裁剪到 `[0,100]`。旧 `paper-mcqs-v1`（α 组规模系数、`sin` 基准分、`2/(p+2)` 阈值、`p=4` 仿射变换）已退役，不得在新链路中复活。
+6. 所有分数入口（团队作品分、规则分、模型分、建议分、教师复核最终分、申诉调整分）都必须限制在 **0–100**，公式与请求校验、DTO、服务层、数据库 CHECK 四处同时约束；贡献度与权重/份额为 0–1 比例。
+7. XGBoost 覆盖 `p=1..4`，不再有 `p=4` 门控，也不再产生 `rule_only` 模式。模型特征顺序固定为中文列名 `标准人数 / 个人贡献度 / 作业总分`（对应 `standardGroupSize / contribution / groupScore`），制品为 `score-model.joblib`（sklearn `joblib.dump`），不要用旧 `xgboost-model.json` 或 `paper-score-p4`。
+8. 模型失败、未激活、超时或版本/哈希不匹配时必须整批回退规则结果。模型分与规则分差值严格大于 2 分时标记异常；该模型拟合的是确定性规则网格，不是真实评分数据，不得声称模型做过真实课堂验证。
+9. 任何评分都要保存输入快照、输入哈希、规则分、模型分、最终分、规则版本、模型版本和解释；不得覆盖已发布历史。`joblib` 是 pickle 序列化，只加载仓库内已登记 SHA-256 的可信制品。
 10. 模型只有达到 RMSE ≤ 1、MAE ≤ 0.8、R² ≥ 0.99 才能注册为可激活版本；禁止为通过门槛而篡改指标。
 
 算法变更必须同时更新 Java/Python 单测和 `docs/SCORING_ALGORITHM.md`，并增加跨实现等值样例。

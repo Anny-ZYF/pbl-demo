@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from scripts.train_model import _stratified_folds, _stratified_holdout, _write_json
-from app.dataset import generate_paper_samples
+import numpy as np
+import pytest
+
+from app.dataset import build_grid_frame
+from scripts.train_model import PARAMETERS, SEED, TEST_SIZE, _metrics, _write_json
 
 
 def test_artifact_hash_survives_git_lf_normalization(tmp_path: Path) -> None:
@@ -15,29 +18,30 @@ def test_artifact_hash_survives_git_lf_normalization(tmp_path: Path) -> None:
     assert hashlib.sha256(generated).digest() == hashlib.sha256(checked_out).digest()
 
 
-def test_holdout_is_deterministic_and_stratified_by_actual_group_size() -> None:
-    samples = generate_paper_samples()
-    training, test, distribution = _stratified_holdout(samples)
-    assert len(training) == 1429
-    assert len(test) == 356
-    assert set(training).isdisjoint(test)
-    assert set(training) | set(test) == set(range(1785))
-    assert distribution == {
-        "1": {"total": 21, "training": 17, "test": 4},
-        "2": {"total": 441, "training": 353, "test": 88},
-        "3": {"total": 441, "training": 353, "test": 88},
-        "4": {"total": 441, "training": 353, "test": 88},
-        "5": {"total": 441, "training": 353, "test": 88},
+def test_parameters_match_the_generation_script() -> None:
+    assert PARAMETERS == {
+        "n_estimators": 150,
+        "max_depth": 5,
+        "learning_rate": 0.07,
+        "random_state": 42,
     }
+    assert SEED == 42
+    assert TEST_SIZE == 0.20
 
 
-def test_five_folds_cover_training_rows_once_and_keep_every_stratum() -> None:
-    samples = generate_paper_samples()
-    training, _, _ = _stratified_holdout(samples)
-    folds = _stratified_folds(training, samples)
-    flattened = [index for fold in folds for index in fold]
-    assert len(folds) == 5
-    assert len(flattened) == len(training)
-    assert len(set(flattened)) == len(training)
-    for fold in folds:
-        assert {samples[index].actual_group_size for index in fold} == {1, 2, 3, 4, 5}
+def test_metrics_are_computed_exactly() -> None:
+    actual = np.array([0.0, 50.0, 100.0])
+    perfect = _metrics(actual, np.array([0.0, 50.0, 100.0]))
+    assert perfect == {"rmse": 0.0, "mae": 0.0, "r2": 1.0}
+
+    biased = _metrics(actual, np.array([2.0, 52.0, 102.0]))
+    assert biased["rmse"] == pytest.approx(2.0)
+    assert biased["mae"] == pytest.approx(2.0)
+    assert biased["r2"] < 1.0
+
+
+def test_grid_is_deterministic_for_training() -> None:
+    first = build_grid_frame()
+    second = build_grid_frame()
+    assert len(first) == 40804
+    assert first.equals(second)

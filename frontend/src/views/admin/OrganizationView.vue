@@ -39,6 +39,12 @@
               <el-table-column prop="memberCount" label="关联人数" width="110" align="right">
                 <template #default="{ row }">{{ displayValue(row.memberCount) }}</template>
               </el-table-column>
+              <el-table-column label="操作" width="110" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="canDeleteOrganization(row)" link type="danger" @click="deleteOrganizationNode(row)">删除</el-button>
+                  <span v-else class="muted-text">—</span>
+                </template>
+              </el-table-column>
             </el-table>
             <el-empty v-else description="暂无组织结构数据" :image-size="80" />
           </section>
@@ -88,11 +94,12 @@
             <el-table-column prop="updatedAt" label="更新时间" min-width="150">
               <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.updateTime) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="225" fixed="right">
+            <el-table-column label="操作" width="285" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
                 <el-button link type="primary" @click="toggleStatus(row)">{{ isAccountEnabled(row) ? '停用' : '启用' }}</el-button>
                 <el-button link type="primary" @click="resetPassword(row)">重置密码</el-button>
+                <el-button v-if="canDeleteAccount(row)" link type="danger" @click="deleteAccountRow(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -311,6 +318,8 @@ import { Plus, Refresh, Search, Upload, UploadFilled } from '@element-plus/icons
 import PageHeader from '@/components/PageHeader.vue'
 import {
   createAccount,
+  deleteAccount,
+  deleteOrganization,
   getAccounts,
   getOrganizationOverview,
   importAccounts,
@@ -320,6 +329,12 @@ import {
 } from '@/api/admin'
 import { getErrorMessage } from '@/api/response'
 import { displayValue, formatDateTime } from '@/utils/format'
+import {
+  canDeleteAccount,
+  canDeleteOrganization,
+  organizationDeleteTarget,
+  organizationMemberCount
+} from '@/utils/organization'
 import { normalizeRole, roleLabel } from '@/utils/roles'
 
 const activeTab = ref('overview')
@@ -399,24 +414,30 @@ const organizationMetrics = computed(() => {
 
 const organizationRows = computed(() => departments.value.map((department, departmentIndex) => ({
   treeKey: `department-${department.id ?? departmentIndex}`,
+  id: department.id,
+  type: 'department',
   name: department.name,
   code: department.code,
   typeLabel: '院系',
-  memberCount: department.memberCount ?? department.accountCount,
+  memberCount: organizationMemberCount(department),
   children: [
     ...(department.majors || []).map((major, majorIndex) => ({
       treeKey: `major-${major.id ?? `${departmentIndex}-${majorIndex}`}`,
+      id: major.id,
+      type: 'major',
       name: major.name,
       code: major.code,
       typeLabel: '专业',
-      memberCount: major.memberCount ?? major.studentCount
+      memberCount: organizationMemberCount(major)
     })),
     ...(department.classes || []).map((classItem, classIndex) => ({
       treeKey: `class-${classItem.id ?? `${departmentIndex}-${classIndex}`}`,
+      id: classItem.id,
+      type: 'class',
       name: classItem.name,
       code: classItem.code,
       typeLabel: '班级',
-      memberCount: classItem.memberCount ?? classItem.studentCount
+      memberCount: organizationMemberCount(classItem)
     }))
   ]
 })))
@@ -660,6 +681,38 @@ async function toggleStatus(row) {
     await loadAccounts()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(getErrorMessage(error, '状态更新失败'))
+  }
+}
+
+async function deleteAccountRow(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除账号“${row.username}”吗？删除后账号将从列表移除并立即无法登录；已产生的课程、分组、提交与成绩记录会保留（逻辑删除）。`,
+      '删除账号',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+    )
+    await deleteAccount(row.id, row.role)
+    ElMessage.success('账号已删除')
+    await reloadAll()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(getErrorMessage(error, '账号删除失败'))
+  }
+}
+
+async function deleteOrganizationNode(row) {
+  const target = organizationDeleteTarget(row)
+  if (!target) return
+  try {
+    await ElMessageBox.confirm(
+      `确认删除${row.typeLabel}“${row.name}”吗？仅无关联人数且无课程、小组等业务引用的组织节点可以删除。`,
+      '删除组织',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+    )
+    await deleteOrganization(target.type, target.id)
+    ElMessage.success(`${row.typeLabel}已删除`)
+    await reloadAll()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(getErrorMessage(error, '组织删除失败'))
   }
 }
 

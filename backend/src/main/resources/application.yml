@@ -4,6 +4,11 @@ server:
   forward-headers-strategy: native
   error:
     include-message: never
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 spring:
   profiles:
@@ -66,6 +71,10 @@ app:
     read-timeout: ${MODEL_READ_TIMEOUT:5s}
   storage:
     root: ${STORAGE_ROOT:./data/uploads}
+  workload:
+    auto-lock-enabled: ${WORKLOAD_AUTO_LOCK_ENABLED:true}
+    auto-lock-initial-delay-ms: ${WORKLOAD_AUTO_LOCK_INITIAL_DELAY_MS:10000}
+    auto-lock-interval-ms: ${WORKLOAD_AUTO_LOCK_INTERVAL_MS:60000}
   bootstrap-admin:
     username: ${BOOTSTRAP_ADMIN_USERNAME:}
     password: ${BOOTSTRAP_ADMIN_PASSWORD:}

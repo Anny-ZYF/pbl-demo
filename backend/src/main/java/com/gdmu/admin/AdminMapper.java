@@ -10,8 +10,8 @@ import java.util.Optional;
 public interface AdminMapper {
     @Select("""
             SELECT
-              (SELECT COUNT(*) FROM student_users) AS studentCount,
-              (SELECT COUNT(*) FROM teacher_users) AS teacherCount,
+              (SELECT COUNT(*) FROM student_users WHERE deleted_at IS NULL) AS studentCount,
+              (SELECT COUNT(*) FROM teacher_users WHERE deleted_at IS NULL) AS teacherCount,
               (SELECT COUNT(*) FROM course WHERE status = 'ACTIVE') AS activeCourseCount,
               (SELECT COUNT(*) FROM assignment WHERE status IN ('PUBLISHED','CLOSED')) AS assignmentCount,
               (SELECT COUNT(*) FROM model_version WHERE status = 'ACTIVE') AS activeModelCount,
@@ -37,8 +37,8 @@ public interface AdminMapper {
               (SELECT COUNT(*) FROM department WHERE status = 'ACTIVE') AS departmentCount,
               (SELECT COUNT(*) FROM major WHERE status = 'ACTIVE') AS majorCount,
               (SELECT COUNT(*) FROM class WHERE status = 'ACTIVE') AS classCount,
-              (SELECT COUNT(*) FROM teacher_users WHERE status = 1) AS activeTeacherCount,
-              (SELECT COUNT(*) FROM student_users WHERE status = 1) AS activeStudentCount
+              (SELECT COUNT(*) FROM teacher_users WHERE status = 1 AND deleted_at IS NULL) AS activeTeacherCount,
+              (SELECT COUNT(*) FROM student_users WHERE status = 1 AND deleted_at IS NULL) AS activeStudentCount
             """)
     Map<String, Object> organizationOverview();
 
@@ -46,6 +46,39 @@ public interface AdminMapper {
             SELECT id, name, status FROM department ORDER BY name
             """)
     List<Map<String, Object>> departments();
+
+    /** Live member counts keep the organization tree's "empty" state honest after deletions. */
+    @Select("""
+            SELECT department_id AS departmentId, COUNT(*) AS memberCount
+            FROM teacher_users WHERE deleted_at IS NULL AND department_id IS NOT NULL
+            GROUP BY department_id
+            """)
+    List<Map<String, Object>> teacherCountsByDepartment();
+
+    @Select("""
+            SELECT COALESCE(cl.department_id, ma.department_id) AS departmentId,
+                   COUNT(DISTINCT s.id) AS memberCount
+            FROM student_users s
+            LEFT JOIN major ma ON ma.id = s.major_id
+            LEFT JOIN `class` cl ON cl.id = s.class_id
+            WHERE s.deleted_at IS NULL AND COALESCE(cl.department_id, ma.department_id) IS NOT NULL
+            GROUP BY COALESCE(cl.department_id, ma.department_id)
+            """)
+    List<Map<String, Object>> studentCountsByDepartment();
+
+    @Select("""
+            SELECT major_id AS majorId, COUNT(*) AS memberCount
+            FROM student_users WHERE deleted_at IS NULL AND major_id IS NOT NULL
+            GROUP BY major_id
+            """)
+    List<Map<String, Object>> studentCountsByMajor();
+
+    @Select("""
+            SELECT class_id AS classId, COUNT(*) AS memberCount
+            FROM student_users WHERE deleted_at IS NULL AND class_id IS NOT NULL
+            GROUP BY class_id
+            """)
+    List<Map<String, Object>> studentCountsByClass();
 
     @Select("SELECT id,department_id AS departmentId,name,status FROM major ORDER BY department_id,name")
     List<Map<String, Object>> majors();
@@ -69,7 +102,7 @@ public interface AdminMapper {
             LEFT JOIN department d ON d.id=COALESCE(t.department_id,m.department_id)
             LEFT JOIN major ma ON ma.id=stu.major_id
             LEFT JOIN `class` cl ON cl.id=stu.class_id
-            WHERE 1=1
+            WHERE v.deleted_at IS NULL
             <if test='role != null and role != ""'>AND v.role = #{role}</if>
             <if test='status != null'>AND v.status = #{status}</if>
             <if test='keyword != null and keyword != ""'>
@@ -86,7 +119,7 @@ public interface AdminMapper {
     @Select("""
             <script>
             SELECT COUNT(*) FROM user_account_view
-            WHERE 1=1
+            WHERE deleted_at IS NULL
             <if test='role != null and role != ""'>AND role = #{role}</if>
             <if test='status != null'>AND status = #{status}</if>
             <if test='keyword != null and keyword != ""'>
@@ -97,7 +130,7 @@ public interface AdminMapper {
     long accountCount(@Param("role") String role, @Param("status") Integer status,
                       @Param("keyword") String keyword);
 
-    @Select("SELECT COUNT(*) FROM user_account_view WHERE username=#{username}")
+    @Select("SELECT COUNT(*) FROM user_account_view WHERE username=#{username} AND deleted_at IS NULL")
     int accountUsernameCount(String username);
 
     @Select("SELECT COUNT(*) FROM department WHERE id=#{departmentId} AND status='ACTIVE'")
@@ -169,30 +202,93 @@ public interface AdminMapper {
     int updateAdmin(@Param("id") long id, @Param("name") String name);
 
     @Update("""
-            UPDATE teacher_users SET name=#{name}, department_id=#{departmentId}, update_time=CURRENT_TIMESTAMP WHERE id=#{id}
+            UPDATE teacher_users SET name=#{name}, department_id=#{departmentId}, update_time=CURRENT_TIMESTAMP
+            WHERE id=#{id} AND deleted_at IS NULL
             """)
     int updateTeacher(@Param("id") long id, @Param("name") String name, @Param("departmentId") Long departmentId);
 
     @Update("""
             UPDATE student_users SET name=#{name}, major_id=#{majorId}, class_id=#{classId}, grade=#{grade},
-                                     update_time=CURRENT_TIMESTAMP WHERE id=#{id}
+                                     update_time=CURRENT_TIMESTAMP
+            WHERE id=#{id} AND deleted_at IS NULL
             """)
     int updateStudent(@Param("id") long id, @Param("name") String name, @Param("majorId") Long majorId,
                       @Param("classId") Long classId, @Param("grade") Integer grade);
 
     @Update("UPDATE admin_users SET status=#{status},token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
     int setAdminStatus(@Param("id") long id, @Param("status") int status);
-    @Update("UPDATE teacher_users SET status=#{status},token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
+    @Update("UPDATE teacher_users SET status=#{status},token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id} AND deleted_at IS NULL")
     int setTeacherStatus(@Param("id") long id, @Param("status") int status);
-    @Update("UPDATE student_users SET status=#{status},token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
+    @Update("UPDATE student_users SET status=#{status},token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id} AND deleted_at IS NULL")
     int setStudentStatus(@Param("id") long id, @Param("status") int status);
 
     @Update("UPDATE admin_users SET password=#{hash},must_change_password=1,token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
     int resetAdminPassword(@Param("id") long id, @Param("hash") String hash);
-    @Update("UPDATE teacher_users SET password=#{hash},must_change_password=1,token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
+    @Update("UPDATE teacher_users SET password=#{hash},must_change_password=1,token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id} AND deleted_at IS NULL")
     int resetTeacherPassword(@Param("id") long id, @Param("hash") String hash);
-    @Update("UPDATE student_users SET password=#{hash},must_change_password=1,token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id}")
+    @Update("UPDATE student_users SET password=#{hash},must_change_password=1,token_version=token_version+1,update_time=CURRENT_TIMESTAMP WHERE id=#{id} AND deleted_at IS NULL")
     int resetStudentPassword(@Param("id") long id, @Param("hash") String hash);
+
+    /** Deleted accounts stay in the view for audit joins; account management filters them out. */
+    @Select("""
+            SELECT id, username, display_name AS displayName, role, status, deleted_at AS deletedAt
+            FROM user_account_view WHERE id=#{id} AND role=#{role} LIMIT 1
+            """)
+    Map<String, Object> accountForDeletion(@Param("id") long id, @Param("role") String role);
+
+    @Update("""
+            UPDATE teacher_users
+            SET teacher_user_id=#{tombstone}, status=0, deleted_at=CURRENT_TIMESTAMP(3),
+                deleted_by_admin_id=#{adminId}, token_version=token_version+1,
+                update_time=CURRENT_TIMESTAMP(3)
+            WHERE id=#{id} AND deleted_at IS NULL
+            """)
+    int softDeleteTeacher(@Param("id") long id, @Param("tombstone") String tombstone, @Param("adminId") long adminId);
+
+    @Update("""
+            UPDATE student_users
+            SET student_user_id=#{tombstone}, status=0, deleted_at=CURRENT_TIMESTAMP(3),
+                deleted_by_admin_id=#{adminId}, token_version=token_version+1,
+                update_time=CURRENT_TIMESTAMP(3)
+            WHERE id=#{id} AND deleted_at IS NULL
+            """)
+    int softDeleteStudent(@Param("id") long id, @Param("tombstone") String tombstone, @Param("adminId") long adminId);
+
+    @Select("SELECT id,name FROM department WHERE id=#{id}")
+    Map<String, Object> departmentById(long id);
+    @Select("SELECT id,name FROM major WHERE id=#{id}")
+    Map<String, Object> majorById(long id);
+    @Select("SELECT id,name FROM `class` WHERE id=#{id}")
+    Map<String, Object> classById(long id);
+
+    @Select("""
+            SELECT (SELECT COUNT(*) FROM teacher_users WHERE department_id=#{id} AND deleted_at IS NULL) AS teachers,
+                   (SELECT COUNT(*) FROM major WHERE department_id=#{id}) AS majors,
+                   (SELECT COUNT(*) FROM `class` WHERE department_id=#{id}) AS classes
+            """)
+    Map<String, Object> departmentUsage(long id);
+
+    @Select("""
+            SELECT (SELECT COUNT(*) FROM student_users WHERE major_id=#{id} AND deleted_at IS NULL) AS students,
+                   (SELECT COUNT(*) FROM `class` WHERE major_id=#{id}) AS classes,
+                   (SELECT COUNT(*) FROM course WHERE major_id=#{id}) AS courses,
+                   (SELECT COUNT(*) FROM course_major WHERE major_id=#{id}) AS courseMajors,
+                   (SELECT COUNT(*) FROM group_table WHERE major_id=#{id}) AS groups
+            """)
+    Map<String, Object> majorUsage(long id);
+
+    @Select("""
+            SELECT (SELECT COUNT(*) FROM student_users WHERE class_id=#{id} AND deleted_at IS NULL) AS students,
+                   (SELECT COUNT(*) FROM group_table WHERE class_id=#{id}) AS groups
+            """)
+    Map<String, Object> classUsage(long id);
+
+    @Delete("DELETE FROM department WHERE id=#{id}")
+    int deleteDepartment(long id);
+    @Delete("DELETE FROM major WHERE id=#{id}")
+    int deleteMajor(long id);
+    @Delete("DELETE FROM `class` WHERE id=#{id}")
+    int deleteClass(long id);
 
     @Select("""
             <script>

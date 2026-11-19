@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 UnitFloat = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -19,14 +19,7 @@ class StudentPredictionInput(ApiModel):
     studentId: str | int
     contribution: UnitFloat
     standardGroupSize: int = Field(ge=1, le=4)
-    actualGroupSize: int = Field(ge=1, le=5)
     groupScore: ScoreFloat
-
-    @model_validator(mode="after")
-    def validate_group_size(self) -> "StudentPredictionInput":
-        if self.actualGroupSize > self.standardGroupSize + 1:
-            raise ValueError("actualGroupSize must be at most standardGroupSize + 1")
-        return self
 
 
 class BatchPredictionInput(ApiModel):
@@ -35,10 +28,10 @@ class BatchPredictionInput(ApiModel):
 
 class StudentPrediction(ApiModel):
     studentId: str | int
-    ruleScore: float
-    modelScore: float | None
-    finalSuggestion: float
-    mode: Literal["model", "rule_fallback", "rule_only"]
+    ruleScore: ScoreFloat
+    modelScore: ScoreFloat | None
+    finalSuggestion: ScoreFloat
+    mode: Literal["model", "rule_fallback"]
     delta: float | None
     anomaly: bool
     explanation: str

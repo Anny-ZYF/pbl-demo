@@ -37,6 +37,12 @@ export const resetAccountPassword = (id, role, newPassword) => http.post(`/admin
   newPassword
 })
 
+// 账号删除是逻辑删除：账号从列表消失、立即无法登录，教学与成绩历史保留。
+export const deleteAccount = (id, role) => http.delete(`/admin/accounts/${id}`, { params: { role } })
+
+// 仅允许删除无成员、且无课程/小组等业务引用的组织节点，后端会再次校验。
+export const deleteOrganization = (type, id) => http.delete(`/admin/organization/${type}/${id}`)
+
 export const getCourses = (params) => getPage('/admin/courses', params)
 
 export const getModelVersions = (params) => getPage('/admin/model-versions', params)

@@ -9,40 +9,46 @@ import java.math.RoundingMode;
 import java.util.Collection;
 import java.util.List;
 
+/**
+ * Deterministic smoothstep scoring rule (version {@code smoothstep-v1}).
+ *
+ * <p>The class name is kept for Spring wiring compatibility; the implementation
+ * is the formula from the project's model generation script (1108.py), not the
+ * earlier printed-paper MCQS formulas. The arithmetic order matches
+ * {@code app/rules.py} so both implementations produce identical scores.
+ */
 @Component
 public class PaperScoringEngine {
-    public static final String RULE_VERSION = "paper-mcqs-v1";
+    public static final String RULE_VERSION = "smoothstep-v1";
+    public static final double BOOST_CAP = 20.0;
+    public static final double MIN_SCORE = 0.0;
+    public static final double MAX_SCORE = 100.0;
     private static final double EPSILON = 1e-6;
 
-    public Score calculate(int standardGroupSize, int actualGroupSize, double groupScore, double contribution) {
-        validate(standardGroupSize, actualGroupSize, groupScore, contribution);
-        int difference = standardGroupSize - actualGroupSize;
-        double alpha = difference == 0 ? Math.exp(0) : 10.0 * difference;
-        double baseline = groupScore + alpha * Math.sin(Math.PI * groupScore / 100.0);
-        double threshold = 2.0 / (standardGroupSize + 2.0);
+    public Score calculate(int standardGroupSize, double groupScore, double contribution) {
+        validate(standardGroupSize, groupScore, contribution);
+        double threshold = 1.0 / standardGroupSize;
+        double normalized;
         double raw;
         String branch;
-        double effectiveContribution = contribution;
-        if (Math.abs(contribution - threshold) <= EPSILON) {
-            raw = baseline;
-            branch = "BASELINE";
-        } else if (contribution > threshold) {
-            if (standardGroupSize == 4) {
-                effectiveContribution = 0.54 * contribution + 0.17;
-            }
-            raw = ((100.0 - baseline) * (effectiveContribution * (standardGroupSize + 2.0) - 2.0)
-                    / standardGroupSize) + baseline;
-            branch = "HIGH_CONTRIBUTION";
-        } else {
-            if (standardGroupSize == 4) {
-                effectiveContribution = 0.67 * contribution + 0.12;
-            }
-            raw = baseline * (standardGroupSize + 2.0) * effectiveContribution / 2.0;
+        if (contribution <= threshold) {
+            // Low branch: t = x * p, score = G * S(t).
+            normalized = contribution * standardGroupSize;
+            raw = groupScore * smoothstep(normalized);
             branch = "LOW_CONTRIBUTION";
+        } else {
+            // High branch: t = (x - 1/p) / (1 - 1/p), score = G + B * S(t).
+            // p == 1 can never reach here because contribution <= 1 == 1/p.
+            normalized = (contribution - threshold) / (1.0 - threshold);
+            raw = groupScore + BOOST_CAP * smoothstep(normalized);
+            branch = "HIGH_CONTRIBUTION";
         }
-        double clamped = Math.max(0, Math.min(100, raw));
-        return new Score(RULE_VERSION, baseline, threshold, contribution, effectiveContribution,
-                clamped, round2(clamped), branch, standardGroupSize == 4);
+        double clamped = Math.max(MIN_SCORE, Math.min(MAX_SCORE, raw));
+        return new Score(RULE_VERSION, threshold, normalized, branch, clamped, round2(clamped));
+    }
+
+    private double smoothstep(double t) {
+        return t * t * (3.0 - 2.0 * t);
     }
 
     public List<MemberContribution> contributions(List<Branch> branches) {
@@ -75,9 +81,8 @@ public class PaperScoringEngine {
                         .filter(share -> share.studentId() == studentId).findFirst().orElseThrow().share()).sum())).toList();
     }
 
-    private void validate(int p, int r, double f, double c) {
+    private void validate(int p, double f, double c) {
         if (p < 1 || p > 4) throw invalid("标准组规模必须在1到4之间");
-        if (r < 1 || r > p + 1) throw invalid("实际组规模必须在1到标准组规模+1之间");
         if (!Double.isFinite(f) || f < 0 || f > 100) throw invalid("团队作品分必须在0到100之间");
         if (!Double.isFinite(c) || c < 0 || c > 1) throw invalid("贡献度必须在0到1之间");
     }
@@ -93,7 +98,6 @@ public class PaperScoringEngine {
     public record MemberShare(long studentId, double share) { }
     public record Branch(long partId, double weight, List<MemberShare> shares) { }
     public record MemberContribution(long studentId, double contribution) { }
-    public record Score(String ruleVersion, double baseline, double threshold, double contribution,
-                        double effectiveContribution, double rawScore, double roundedScore,
-                        String branch, boolean withinPaperModelScope) { }
+    public record Score(String ruleVersion, double threshold, double normalizedContribution,
+                        String branch, double rawScore, double roundedScore) { }
 }

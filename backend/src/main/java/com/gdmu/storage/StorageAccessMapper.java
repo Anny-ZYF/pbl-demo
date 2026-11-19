@@ -13,7 +13,7 @@ public interface StorageAccessMapper {
               WHERE (s.file_path=#{key} OR EXISTS(
                 SELECT 1 FROM submission_attachment sa
                 WHERE sa.submission_id=s.id AND sa.storage_key=#{key}
-              )) AND a.teacher_id=#{teacherId}
+              )) AND a.teacher_id=#{teacherId} AND s.status <> 'DRAFT'
             )
             """)
     boolean teacherCanRead(@Param("teacherId") long teacherId, @Param("key") String key);
@@ -29,4 +29,10 @@ public interface StorageAccessMapper {
             )
             """)
     boolean studentCanRead(@Param("studentId") long studentId, @Param("key") String key);
+
+    @Select("""
+            SELECT original_name FROM submission_attachment
+            WHERE storage_key=#{key} ORDER BY id DESC LIMIT 1
+            """)
+    String originalNameByKey(@Param("key") String key);
 }

@@ -16,7 +16,13 @@ import com.gdmu.security.AccountMapper;
 
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -78,5 +84,32 @@ class AdminControllerSecurityTest {
         mvc.perform(get("/api/v1/admin/accounts").param("page", "not-a-number"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    @WithMockUser(roles = "STUDENT")
+    void studentCannotDeleteAccountsOrOrganizations() throws Exception {
+        mvc.perform(delete("/api/v1/admin/accounts/66").param("role", "STUDENT"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/v1/admin/organization/class/6"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).deleteAccount(any(), anyLong(), anyString());
+        verify(service, never()).deleteOrganization(any(), anyString(), anyLong());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void adminCanCallBothDeletionEndpoints() throws Exception {
+        when(service.deleteAccount(any(), anyLong(), anyString()))
+                .thenReturn(Map.of("id", 66, "mode", "LOGICAL_DELETE"));
+        when(service.deleteOrganization(any(), anyString(), anyLong()))
+                .thenReturn(Map.of("id", 6, "type", "CLASS"));
+
+        mvc.perform(delete("/api/v1/admin/accounts/66").param("role", "STUDENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mode").value("LOGICAL_DELETE"));
+        mvc.perform(delete("/api/v1/admin/organization/class/6"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.type").value("CLASS"));
     }
 }

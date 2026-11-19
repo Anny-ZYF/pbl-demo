@@ -5,50 +5,47 @@
 SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 SET time_zone = '+08:00';
 
--- Paper-aligned rule metadata. W is stored in assignment_parts.weight, Q in
+-- Smoothstep rule metadata. W is stored in assignment_parts.weight, Q in
 -- workload_item.share, and C = Q * W^T is computed per scoring snapshot.
+-- The active scoring path does not use actual_group_size.
 INSERT INTO scoring_rule
     (rule_key, version_no, name, paper_method, formula_version,
      standard_group_size, formula_assumptions, feature_schema_json,
      normalization_json, min_score, max_score, status)
 VALUES
     (
-        'MCQS_PAPER_RULE',
+        'SMOOTHSTEP_SCORE_RULE',
         1,
-        '多维贡献量化与差异化评分规则',
-        'PAPER_MCQS',
-        'paper-mcqs-v1',
+        '平滑分段差异化评分规则',
+        'SMOOTHSTEP',
+        'smoothstep-v1',
         4,
         JSON_OBJECT(
-            'ruleVersion', 'paper-mcqs-v1',
+            'ruleVersion', 'smoothstep-v1',
             'weightConstraint', 'w_i >= 0; sum(W) = 1',
             'shareConstraint', 'q_ij >= 0; sum_j(Q_ij) = 1 for every assignment part',
             'contributionEquation', 'C = Q * transpose(W); sum(C) = 1',
-            'groupSizeCoefficient', JSON_OBJECT(
-                'whenEqual', 'a = exp(p-r) = 1',
-                'whenDifferenceInMinus1To3', 'a = 10 * (p-r)'
-            ),
-            'baselineEquation', 'meanScore = f + a * sin(pi*f/100)',
-            'neutralContribution', '2/(p+2)',
-            'paperBoundaryNormalizationForP4', JSON_OBJECT(
-                'highBranch', 'cPrime = 0.54*c + 0.17',
-                'lowBranch', 'cPrime = 0.67*c + 0.12'
-            ),
-            'actualGroupSizeRange', '1 <= r <= p+1',
+            'threshold', 'a = 1/p',
+            'lowBranch', 't = x*p; score = G*(3*t^2 - 2*t^3)',
+            'highBranch', 't = (x-a)/(1-a); score = G + 20*(3*t^2 - 2*t^3)',
+            'boostCap', 20,
             'scoreClamp', '[0,100]',
-            'reviewPolicy', 'model-rule delta and anomalous inputs require teacher review'
+            'standardGroupSizeRange', '[1,4]',
+            'actualGroupSize', 'not used by the scoring rule or the model',
+            'modelScope', 'p=1..4',
+            'reviewPolicy', 'teacher must review every member; model output is a suggestion only'
         ),
         JSON_ARRAY(
-            JSON_OBJECT('name', 'contribution', 'type', 'decimal', 'range', '[0,1]'),
-            JSON_OBJECT('name', 'actualGroupSize', 'type', 'integer'),
-            JSON_OBJECT('name', 'groupScore', 'type', 'decimal', 'range', '[0,100]')
+            JSON_OBJECT('name', '标准人数', 'jsonField', 'standardGroupSize', 'type', 'integer', 'range', '[1,4]'),
+            JSON_OBJECT('name', '个人贡献度', 'jsonField', 'contribution', 'type', 'decimal', 'range', '[0,1]'),
+            JSON_OBJECT('name', '作业总分', 'jsonField', 'groupScore', 'type', 'decimal', 'range', '[0,100]')
         ),
         JSON_OBJECT(
-            'standardGroupSizeGate', 4,
-            'standardGroupSizeRole', 'applicability gate and request context; excluded from XGBoost feature vector',
-            'assignmentPartWeightScale', '[0,1]',
-            'workloadShareScale', '[0,1]',
-            'legacyPercentConversion', 'values greater than 1 are divided by 100 during migration'
+            'standardGroupSizeRange', '[1,4]',
+            'scoreRange', '[0,100]',
+            'boostCap', 20,
+            'scoreBoundaries', 'min_score = 0.00, max_score = 100.00',
+            'actualGroupSizeRole', 'excluded from features and formula'
         ),
         0.00,
         100.00,
@@ -62,20 +59,21 @@ ON DUPLICATE KEY UPDATE
     feature_schema_json = VALUES(feature_schema_json),
     normalization_json = VALUES(normalization_json),
     min_score = VALUES(min_score),
-    max_score = VALUES(max_score);
+    max_score = VALUES(max_score),
+    status = VALUES(status);
 
--- Deterministic paper rule is runnable without a model artifact.
+-- Deterministic rule is runnable without a model artifact.
 INSERT INTO model_version
     (model_key, version, algorithm, status, feature_schema_json,
      hyperparameters_json, metrics_json, activated_at)
 VALUES
     (
         'MCQS_RULE',
-        'paper-v1',
+        'smoothstep-rule-v1',
         'RULE',
         'ACTIVE',
-        JSON_ARRAY('contribution', 'standardGroupSize', 'actualGroupSize', 'groupScore'),
-        JSON_OBJECT('formulaVersion', 'paper-mcqs-v1'),
+        JSON_ARRAY('标准人数', '个人贡献度', '作业总分'),
+        JSON_OBJECT('formulaVersion', 'smoothstep-v1'),
         JSON_OBJECT('validation', 'deterministic formula metadata only'),
         CURRENT_TIMESTAMP(3)
     )
@@ -84,62 +82,53 @@ ON DUPLICATE KEY UPDATE
     hyperparameters_json = VALUES(hyperparameters_json),
     metrics_json = VALUES(metrics_json);
 
--- Registered verified artifact. It remains VALIDATED until an administrator
--- explicitly activates it; database uniqueness prevents two active versions.
+-- Delivered joblib artifact. Its hash is registered in artifacts/sha256.json;
+-- the runtime refuses to load it if any digest or the feature order differs.
 INSERT INTO model_version
     (model_key, version, algorithm, status, artifact_uri, artifact_sha256,
-     feature_schema_json, hyperparameters_json, metrics_json)
+     feature_schema_json, hyperparameters_json, metrics_json, activated_at)
 VALUES
     (
-        'paper-score-p4',
-        'xgb-p4-seed2025-172a3cf9486e',
+        'smoothstep-score',
+        'smoothstep-xgb-a2b2c30a05b1',
         'XGBOOST',
-        'VALIDATED',
-        'algorithm-service://artifacts/xgboost-model.json',
-        '172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d',
-        JSON_ARRAY('contribution', 'actual_group_size', 'group_score'),
+        'ACTIVE',
+        'algorithm-service://artifacts/score-model.joblib',
+        'a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644',
+        JSON_ARRAY('标准人数', '个人贡献度', '作业总分'),
         JSON_OBJECT(
-            'selection', 'deterministic tuned fixed parameters',
+            'selection', 'delivered by project owner (1108.py)',
+            'modelFormat', 'joblib-sklearn',
             'parameters', JSON_OBJECT(
-                'n_estimators', 800,
-                'learning_rate', 0.04,
-                'max_depth', 6,
-                'min_child_weight', 0.5,
-                'subsample', 1.0,
-                'colsample_bytree', 1.0,
-                'reg_alpha', 0.0,
-                'reg_lambda', 1.0,
-                'objective', 'reg:squarederror',
-                'eval_metric', 'rmse',
-                'tree_method', 'hist',
-                'random_state', 2025,
-                'n_jobs', 1
+                'n_estimators', 150,
+                'learning_rate', 0.07,
+                'max_depth', 5,
+                'random_state', 42
             ),
-            'search', JSON_OBJECT(
-                'available', TRUE,
-                'method', 'BayesSearchCV',
-                'executed', FALSE,
-                'requested', FALSE,
-                'note', 'Bayesian search is available via --search but was not executed for this artifact'
-            ),
-            'standardGroupSizeGate', 4,
-            'standardGroupSizeRole', 'request context only; not a trained feature'
+            'split', JSON_OBJECT('method', 'train_test_split', 'testSize', 0.2, 'randomState', 42),
+            'ruleVersion', 'smoothstep-v1',
+            'standardGroupSizeRange', '[1,4]',
+            'scoreRange', '[0,100]'
         ),
         JSON_OBJECT(
             'eligibility', 'ELIGIBLE',
-            'holdout', JSON_OBJECT('rmse', 0.482899, 'mae', 0.356837, 'r2', 0.999700),
-            'crossValidation', JSON_OBJECT('folds', 5, 'meanRmse', 0.766012,
-                                           'meanMae', 0.525321, 'meanR2', 0.999259),
-            'datasetSha256', '7e033aef431573642fa5b5d6cc147794647084aa2c3323056e5a39a30081d146'
-        )
+            'holdout', JSON_OBJECT('rmse', 0.8942731731861232,
+                                   'mae', 0.6381276982293735,
+                                   'r2', 0.9992094929712033),
+            'thresholds', JSON_OBJECT('rmseMax', 1.0, 'maeMax', 0.8, 'r2Min', 0.99),
+            'datasetRows', 40804,
+            'note', 'Measured against the deterministic smoothstep rule grid, not real student data.'
+        ),
+        CURRENT_TIMESTAMP(3)
     )
 ON DUPLICATE KEY UPDATE
-    status = IF(model_version.status = 'ACTIVE', 'ACTIVE', VALUES(status)),
+    status = VALUES(status),
     artifact_uri = VALUES(artifact_uri),
     artifact_sha256 = VALUES(artifact_sha256),
     feature_schema_json = VALUES(feature_schema_json),
     hyperparameters_json = VALUES(hyperparameters_json),
-    metrics_json = VALUES(metrics_json);
+    metrics_json = VALUES(metrics_json),
+    activated_at = VALUES(activated_at);
 
 INSERT INTO model_version
     (model_key, version, algorithm, status, feature_schema_json, metrics_json)

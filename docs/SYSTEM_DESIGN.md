@@ -15,7 +15,7 @@
 1. 教师定义作业评价分支及其权重 `W`。
 2. 教师记录各成员在每个分支上的工作量份额 `Q`，成员逐一确认。
 3. 系统计算多维贡献度 `C = QW^T`。
-4. 系统始终计算确定性规则分；标准组规模 `p=4` 时可并行给出 XGBoost 建议分。
+4. 系统始终按 `smoothstep-v1` 计算确定性规则分；标准组规模 `p=1..4` 均可并行给出 XGBoost 建议分，所有分数裁剪在 0–100。
 5. 教师复核每名成员的结果后发布。
 6. 学生查看解释并在规定期限内申诉，教师处理后留下审计记录。
 
@@ -26,6 +26,7 @@
 - **可解释、可回退**：规则分永远保留；模型不可用时仍可完成评分。
 - **最小权限**：管理员管平台基础数据与运行治理，教师管自己的教学对象，学生只访问自己的课程、团队与成绩。
 - **数据最少化**：不因“以后可能用到”而收集额外个人信息。
+- **单一时间窗口**：已取消「发布后 2 天组队期」。发布到截止时间之间，组队、工作量分配、附件和提交同时开放；到达截止时间由后端统一冻结学生端写入，并自动锁定未确认的分工版本。前端不得自行用 `publishedAt + 2 天` 推算阶段。
 
 ## 2. 当前实现范围
 
@@ -35,7 +36,7 @@
 | 教师前端 | **团队后续** | 只有统一布局与开发占位页；业务页面不得视为完成。 |
 | 学生前端 | **团队后续** | 只有统一布局与开发占位页；业务页面不得视为完成。 |
 | Spring Boot 后端 | **已实现核心闭环** | JWT、三角色鉴权、账号治理、课程/作业/团队/提交、成员与附件读取、工作量确认、评分、复核、发布、申诉、成绩修订与审计接口已存在，可直接支撑教师端和学生端页面开发。 |
-| Python 算法服务 | **已实现** | 论文规则、MCQS 贡献计算、可选 XGBoost、Bearer 内部鉴权、模型失败回退。 |
+| Python 算法服务 | **已实现** | smoothstep-v1 规则、MCQS 贡献计算、joblib 格式 XGBoost 推理、Bearer 内部鉴权、模型失败回退。 |
 | MySQL 数据层 | **已实现** | 生产核心结构、种子元数据与 Flyway 迁移；部署前仍须按部署文档在空库或旧库路径中二选一。 |
 | 文件存储 | **已实现上传与受控下载** | 本地受控目录上传与 SHA-256；下载按管理员、上传者或课程/作业/团队/成绩关系鉴权，尚无内联预览与删除。 |
 
@@ -48,7 +49,7 @@ flowchart LR
     J -->|"MyBatis / 事务"| M[("MySQL 8")]
     J -->|"内部 Bearer Token"| P["FastAPI 规则与 XGBoost 服务"]
     J --> F["受控上传目录"]
-    P --> A["JSON 模型、metadata、metrics、SHA-256"]
+    P --> A["joblib 模型、metadata、metrics、SHA-256"]
 ```
 
 职责边界：
@@ -66,14 +67,14 @@ flowchart TD
     A["教师创建作业和评价分支 W"] --> B["发布作业并建立团队"]
     B --> C["学生提交团队作品"]
     C --> D["教师录入团队作品分 f"]
-    D --> E["教师提交各分支成员份额 Q"]
-    E --> F{"全体成员确认?"}
-    F -->|"有人异议"| E
-    F -->|"全部确认"| G["锁定工作量版本"]
+    D --> E["组长/教师提交各分支成员份额 Q"]
+    E --> F{"全员确认 或 已到截止时间?"}
+    F -->|"有人异议且未截止"| E
+    F -->|"全部确认 / 截止自动锁定"| G["锁定工作量版本"]
     G --> H["计算 C 与规则分"]
-    H --> I{"p=4 且模型可用、版本匹配?"}
+    H --> I{"模型可用且版本/哈希匹配?"}
     I -->|"是"| J["记录模型分、偏差与异常"]
-    I -->|"否"| K["规则分回退或 rule_only"]
+    I -->|"否"| K["规则分回退"]
     J --> L["教师逐人复核"]
     K --> L
     L --> M["发布成绩"]
@@ -86,8 +87,8 @@ flowchart TD
 
 - 一个作业的分支权重之和必须为 `1`。
 - 每个分支必须包含完整且相同的团队成员集合；该分支成员份额之和必须为 `1`。
-- 实际组员数必须满足 `1 <= r <= p + 1`，当前作业创建接口限制 `1 <= p <= 4`。
-- 只有全体成员 `CONFIRMED` 的工作量版本才能锁定并用于评分。
+- 标准组规模限制为 `1 <= p <= 4`；实际组员数 `r` 只作为团队事实保留在历史列，不参与评分公式、模型特征或算法服务请求。
+- 工作量版本在「全体成员 `CONFIRMED`」或「到达作业 `deadline`」时锁定并用于评分。截止自动锁定由后端定时清扫与读取时兜底共同保证：每组只保留最新一个仍开放的版本为 `LOCKED`，其余版本置 `SUPERSEDED`；未提交过分工版本的小组不凭空生成份额数据，评分会明确提示缺少分工版本。`workload_set.locked_at >= assignment.deadline` 用于区分自动锁定与全员确认锁定。
 - 同一输入快照与同一模型版本不能重复发起相同评分运行。
 - 教师必须提交本次运行全部成员的复核决定；调整算法建议分时必须填写原因。
 - 学生只能看到 `PUBLISHED` 的成绩。
@@ -111,12 +112,14 @@ flowchart TD
 | 路由 | 页面 | 状态 | 必要职责 |
 |---|---|---|---|
 | `/admin/dashboard` | 工作台 | **已实现** | 展示师生、课程、作业、评分运行、异常、申诉和当前模型等关键状态；只做概览和入口。 |
-| `/admin/organization` | 组织与账号 | **已实现** | 查看院系下并列的专业与班级（班级号按学院统一编号，与专业无关）；检索、新增、编辑、启停和重置师生账号；新增/编辑学生账号时可按任意班号在学院下自动建班；支持 UTF-8 CSV 模板导入，逐行展示成功、失败和临时密码。 |
+| `/admin/organization` | 组织与账号 | **已实现** | 查看院系下并列的专业与班级（班级号按学院统一编号，与专业无关）；检索、新增、编辑、启停、重置和删除师生账号；新增/编辑学生账号时可按任意班号在学院下自动建班；支持 UTF-8 CSV 模板导入，逐行展示成功、失败和临时密码；组织树按实时关联人数显示，仅无成员且无课程/小组引用的节点可删除。 |
 | `/admin/teaching-data` | 教学数据 | **已实现** | 全局只读检索课程与作业数量；教学操作仍由教师端完成。 |
 | `/admin/scoring-model` | 评分模型 | **已实现** | 查看模型版本、准入指标、评分运行和模型/规则偏差异常；按生产契约注册模型，激活或回滚已验证版本，并记录异常处理说明。 |
 | `/admin/audit-logs` | 审计日志 | **已实现** | 按事件、角色、日期和关键字查询关键业务事件；前端不提供删除。 |
 
 新增单个账号后临时密码会在当前结果中明确展示；批量导入报告也会逐账号返回临时密码。管理员必须安全交付，不能把临时凭据写入共享文档或日志。模型激活仅改变平台登记状态，不能替代算法服务制品部署与版本/哈希核对。
+
+账号删除采用**逻辑删除（注销）**：教师/学生账号保留数据行和全部教学历史，但登录名改写为保留占位名、`status` 置停用、`tokenVersion` 递增并撤销全部 Refresh Token，同时从账号列表、工作台计数和组织人数中剔除；管理员账号不可删除。组织节点仅在无成员、无子节点、无课程/小组引用时才允许物理删除，避免把仍有课程或成绩归属的院系、专业、班级删空。
 
 明确不在管理员端继续增加的内容：教师作业编辑、团队分配、作品评分、工作量确认、最终成绩修改和学生申诉业务处理。这些均属于教师端。
 
@@ -130,7 +133,7 @@ flowchart TD
 | `/teacher/courses` | 我的课程 | **团队后续** | 使用 `GET /teacher/courses` 展示本人课程；不可查看或修改其他教师课程。 |
 | `/teacher/courses/:courseId/assignments` | 课程作业 | **团队后续** | 查看、创建并发布作业。创建时编辑评价分支、权重、标准组规模和截止时间，实时提示权重和必须为 1。 |
 | `/teacher/assignments/:assignmentId/groups` | 团队管理 | **团队后续** | 查看和建立该作业团队，使用课程学生候选接口筛选未入组学生，并通过受归属校验的成员接口展示组长和成员。 |
-| `/teacher/assignments/:assignmentId/submissions` | 提交与团队评分 | **团队后续** | 查看提交正文、附件 `storageKey` 和说明；通过受鉴权文件接口下载附件，录入 `0..100` 团队作品分和评语。 |
+| `/teacher/assignments/:assignmentId/submissions` | 提交与团队评分 | **团队后续** | 查看提交说明（`content` 与 `submit_note` 同值）、附件 `storageKey`（`DRAFT` 草稿提交不返回）；通过受鉴权文件接口下载附件，录入 `0..100` 团队作品分和评语。 |
 | `/teacher/assignments/:assignmentId/workload` | 工作量分配 | **团队后续** | 按评价分支给每名成员分配份额和证据；每列合计为 1；提交后等待成员确认。 |
 | `/teacher/scoring-runs/:runId` | 差异化评分复核 | **团队后续** | 展示贡献度、团队分、规则分、模型分、偏差、异常和解释；要求逐人确认，人工改分必须填理由。 |
 | `/teacher/appeals` | 成绩申诉 | **团队后续** | 查看本人作业的申诉；接受时填写调整后分数和处理说明，驳回时填写说明。 |
@@ -146,7 +149,7 @@ flowchart TD
 | `/student/dashboard` | 学生工作台 | **团队后续** | 汇总待提交作业、待确认工作量、新发布成绩和申诉期限。当前没有专用聚合接口。 |
 | `/student/courses` | 我的课程 | **团队后续** | 使用 `GET /student/courses` 查看有效选课，并进入已发布作业。 |
 | `/student/courses/:courseId/assignments` | 课程作业 | **团队后续** | 展示 `PUBLISHED`/结束态作业及提交状态。 |
-| `/student/assignments/:assignmentId/submission` | 团队作品提交 | **团队后续** | 输入正文或先上传附件后提交 `storageKey`；同一团队同一作业再次提交会更新现有提交。 |
+| `/student/assignments/:assignmentId/submission` | 团队作品提交 | **团队后续** | 学生只需填写「提交说明」即可提交，附件完全可选；提交说明即提交内容，前端同时写入 `content` 与 `note`，后端在 `content` 为空时用 `note` 兜底。附件上传后先登记为 `DRAFT` 草稿附件（全组可见、教师不可见），正式提交时同一提交转为 `SUBMITTED` 后教师才可见；同一团队同一作业再次提交会更新现有提交。**提交属于小组而非个人**：`submission` 由 `(assignment_id, group_id, is_latest)` 唯一约束，任意成员提交后全组共享同一 `submitted`、`content`、`attachments`；列表与详情都按 `group_member` 关联本组并排除 `DRAFT`，`scorePublished` 只认本组 `scoring_run`。作业详情的附件列表按同一个 `groupId` 取本组最新提交；提交窗口内（截止前、未批阅、成绩未发布）本组成员可删除当前提交的任意附件，包含重新提交编辑态中先前已提交的附件，`GRADED`/发布后冻结。 |
 | `/student/groups` | 我的团队 | **团队后续** | 展示本人所属团队。当前接口只给团队摘要，成员详情需补接口。 |
 | `/student/assignments/:assignmentId/workload` | 工作量确认 | **团队后续** | 展示所有分支和成员份额；选择 `CONFIRMED` 或 `OBJECTED`，异议必须填写原因。 |
 | `/student/scores` | 我的成绩 | **团队后续** | 只展示已发布成绩；清楚区分团队分、贡献度、规则分、模型分、教师最终分和解释。 |
@@ -185,8 +188,8 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED
-    CREATED --> MODEL_COMPLETE: 模型可用，或非 p=4 的 rule_only
-    CREATED --> DEGRADED: p=4 模型不可用/不匹配，规则回退
+    CREATED --> MODEL_COMPLETE: 模型可用且通过校验
+    CREATED --> DEGRADED: 模型不可用/不匹配，规则回退
     MODEL_COMPLETE --> APPROVED: 教师复核全部成员
     DEGRADED --> APPROVED: 教师复核全部成员
     APPROVED --> PUBLISHED: 教师发布
@@ -209,7 +212,7 @@ stateDiagram-v2
 
 | 聚合 | 主要表 | 关键事实 |
 |---|---|---|
-| 账号与组织 | `admin_users`、`teacher_users`、`student_users`、`department`、`major`、`class`、`user_account_view` | 三类账号物理分表，统一视图输出 `ADMIN/TEACHER/STUDENT`；密码只存 BCrypt。 |
+| 账号与组织 | `admin_users`、`teacher_users`、`student_users`、`department`、`major`、`class`、`user_account_view` | 三类账号物理分表，统一视图输出 `ADMIN/TEACHER/STUDENT` 并带 `deleted_at`；密码只存 BCrypt；教师/学生注销后保留行与历史，登录名改为 `#<id>` 占位。 |
 | 课程与作业 | `course`、`student_course`、`assignment`、`assignment_parts` | `assignment_parts.weight` 保存 `W`；作业保存标准组规模和规则版本引用。 |
 | 团队与提交 | `group_table`、`group_member`、`submission` | 团队绑定具体作业；一个学生在同一作业只应属于一个有效团队。 |
 | 工作量 | `workload_set`、`workload_item`、`workload_confirmation` | `workload_item.share` 保存 `Q`；版本锁定后才可评分。 |
@@ -222,7 +225,7 @@ stateDiagram-v2
 - API 使用短期 JWT Access Token 和轮换 Refresh Token；Refresh Token 在数据库只存 SHA-256。
 - Spring Security 按 `/api/v1/admin/**`、`/teacher/**`、`/student/**` 强制角色隔离，服务层继续校验资源归属。
 - Access Token 声明中的角色为 `ADMIN/TEACHER/STUDENT`；前端内部可标准化为 `ROLE_*`，但不能据此前端判断替代后端鉴权。
-- Access/Refresh Token 均绑定账号 `tokenVersion`；退出、停用/启用、管理员重置密码和用户修改密码都会递增版本，使旧 Token 立即失效。
+- Access/Refresh Token 均绑定账号 `tokenVersion`；退出、停用/启用、注销账号、管理员重置密码和用户修改密码都会递增版本，使旧 Token 立即失效。
 - 每次请求都有 `X-Request-Id`；业务审计应关联请求号、操作者、聚合对象和最少必要上下文。
 - 反向代理必须覆盖客户端传入的转发头；Spring/Tomcat 只接受内部可信代理转发后的客户端地址，生产禁止公网直连 8080。
 - Python `/v1/*` 必须使用内部 Bearer Token，并只监听内网或回环地址。
@@ -246,7 +249,7 @@ stateDiagram-v2
 
 ## 10. 团队开发边界
 
-1. 不修改论文公式、阈值、歧义决策或版本字符串来“配合页面”；算法变更必须独立评审并同时更新 Java、Python、测试、模型产物和本文档。
+1. 不修改 `smoothstep-v1` 公式、阈值 `1/p`、加分上限 20、分数边界 `[0,100]` 或版本字符串来“配合页面”；算法变更必须独立评审并同时更新 Java、Python、测试、模型产物和本文档。
 2. 不直接更新评分表来跳过状态机；必须调用服务方法并产生审计事件。
 3. 不在前端保存第二套角色 Token、第二套 API 响应格式或第二套评分状态名称。
 4. 教师端和学生端优先复用 `frontend/src/api/http.js`、Pinia 会话、共享布局与通用组件；业务 API 分模块新增。

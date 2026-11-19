@@ -5,9 +5,18 @@ export const createCourse = (data) => http.post('/teacher/courses', data)
 export const getAssignments = (courseId) => http.get(`/teacher/courses/${courseId}/assignments`)
 export const createAssignment = (courseId, data) => http.post(`/teacher/courses/${courseId}/assignments`, data)
 export const publishAssignment = (assignmentId) => http.post(`/teacher/assignments/${assignmentId}/publish`)
+export const getAssignmentDetail = (assignmentId) => http.get(`/teacher/assignments/${assignmentId}`)
+export const updateAssignment = (assignmentId, data) => http.put(`/teacher/assignments/${assignmentId}`, data)
+export const deleteAssignment = (assignmentId) => http.delete(`/teacher/assignments/${assignmentId}`)
 export const getStudents = (courseId, assignmentId) => http.get(`/teacher/courses/${courseId}/students`, { params: { assignmentId } })
 export const getTeacherScores = (courseId, assignmentId) => http.get(`/teacher/courses/${courseId}/scores`, { params: { assignmentId } })
-export const importStudents = (courseId, studentNos) => http.post(`/teacher/courses/${courseId}/students/import`, { studentNos })
+export const getImportClasses = (courseId, keyword = '') => http.get(`/teacher/courses/${courseId}/classes`, { params: { keyword } })
+export const getClassRoster = (courseId, classId) => http.get(`/teacher/courses/${courseId}/classes/${classId}/students`)
+// 兼容旧调用：直接传学号数组时自动包装成 { studentNos }
+export const importStudents = (courseId, payload) => http.post(
+  `/teacher/courses/${courseId}/students/import`,
+  Array.isArray(payload) ? { studentNos: payload } : payload
+)
 export const dropStudent = (courseId, studentId) => http.delete(`/teacher/courses/${courseId}/students/${studentId}`)
 export const getGroups = (assignmentId) => http.get(`/teacher/assignments/${assignmentId}/groups`)
 export const getSubmissions = (assignmentId) => http.get(`/teacher/assignments/${assignmentId}/submissions`)

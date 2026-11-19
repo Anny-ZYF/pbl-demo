@@ -125,7 +125,7 @@ Authorization: Bearer <accessToken>
 
 | 方法与路径 | 权限 | 请求 | 成功 `data` | HTTP |
 |---|---|---|---|---|
-| `POST /files` | 任一已登录角色 | `multipart/form-data`，字段 `file` | `StoredObject` | 200 |
+| `POST /files` | 任一已登录角色 | `multipart/form-data`，字段 `file`，可选字段 `name` | `StoredObject` | 200 |
 | `GET /files?key={storageKey}` | 具有附件读取权限的已登录角色 | 查询参数 `key` | 原始文件流 | 200 |
 
 ```json
@@ -137,9 +137,13 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-允许扩展名：`pdf`、`doc`、`docx`、`xls`、`xlsx`、`ppt`、`pptx`、`zip`、`txt`、`md`、`png`、`jpg`、`jpeg`。单文件上限 20 MB，请求上限 25 MB。返回的是受控 `storageKey`，不是公开 URL。
+允许扩展名：`pdf`、`doc`、`docx`、`xls`、`xlsx`、`ppt`、`pptx`、`zip`、`rar`、`txt`、`md`、`png`、`jpg`、`jpeg`。单文件上限 20 MB，请求上限 25 MB。返回的是受控 `storageKey`，不是公开 URL。
 
-下载接口返回带 UTF-8 文件名的 `Content-Disposition: attachment`，并设置 `X-Content-Type-Options: nosniff`。管理员可读取任意受控附件；上传者可读取自己角色/ID目录下的附件；教师和学生读取他人上传附件时还要通过课程、作业、团队或成绩关系校验。无读取权限返回 403，文件不存在返回 404。当前没有浏览器内联预览或删除接口。
+可选字段 `name` 是原始文件名的 `encodeURIComponent` 结果（纯 ASCII）。服务端优先采用它作为 `StoredObject.originalName`，避免部分容器把 multipart 头里的中文文件名按 ISO-8859-1 误解码；未传时回退到 multipart 文件名并做 mojibake 修复。文件名在入库和写入响应头前都会清洗路径分隔符、控制字符和引号。
+
+**`GET /files` 不是匿名静态资源**：它落在 `SecurityConfig` 的 `anyRequest().authenticated()` 下，必须携带 `Authorization: Bearer <access token>`。前端一律通过 Axios 以 `responseType: 'blob'` 下载并用 `a.download` 指定文件名，禁止用裸 `<a href="/api/v1/files?...">`、`window.open` 或 `<img src>` 直接跳转，否则会得到 401。
+
+下载文件名取自 `submission_attachment.original_name`（即上传时记录的真实文件名），回退到磁盘上的存储文件名；响应为带 UTF-8 文件名的 `Content-Disposition: attachment`，并设置 `X-Content-Type-Options: nosniff`。管理员可读取任意受控附件；上传者可读取自己角色/ID目录下的附件；教师和学生读取他人上传附件时还要通过课程、作业、团队或成绩关系校验。**附件的可见性按提交状态分段**：`DRAFT` 提交上的附件只有该小组 `ACTIVE` 成员能列出和下载；教师侧的提交列表、附件列表和下载权限都排除 `DRAFT`，只有小组正式提交（`SUBMITTED` 及之后）教师才可见。无读取权限返回 403，文件不存在返回 404。当前没有浏览器内联预览或删除接口。
 
 ## 4. 管理员接口 `AdminController`
 
@@ -157,6 +161,8 @@ Authorization: Bearer <accessToken>
 | `PUT /admin/accounts/{id}` | `AccountUpdateRequest` | `null` | 200 |
 | `PUT /admin/accounts/{id}/status` | `{role,status}` | `null` | 200 |
 | `POST /admin/accounts/{id}/reset-password` | `{role,newPassword}` | `null` | 200 |
+| `DELETE /admin/accounts/{id}` | `role`（必填） | `{id,role,username,mode}` | 200 |
+| `DELETE /admin/organization/{type}/{id}` | `type` 为 `department/major/class` | `{id,type,name}` | 200 |
 | `GET /admin/courses` | `keyword? teacherName? status? page? pageSize?` | 课程分页 | 200 |
 | `GET /admin/model-versions` | `status? page? pageSize?` | 模型分页 | 200 |
 | `POST /admin/model-versions` | `ModelRegistrationRequest` | `{id,status}` | **201** |
@@ -207,7 +213,7 @@ Authorization: Bearer <accessToken>
 
 组织概况包含 `departmentCount`、`majorCount`、`classCount`、`activeTeacherCount`、`activeStudentCount`、`accountCount` 和：
 
-班级按**学院维度统一编号**。`departments[].majors` 与 `departments[].classes` 是同一学院下两个并列维度，班级不再挂在专业下；`classes[].name` 为学院内的班级号（如 `"7"`），同号班级在学院内唯一，不同专业的学生可以属于同一班号。
+班级按**学院维度统一编号**。`departments[].majors` 与 `departments[].classes` 是同一学院下两个并列维度，班级不再挂在专业下；`classes[].name` 为学院内的班级号（如 `"7"`），同号班级在学院内唯一，不同专业的学生可以属于同一班号。院系、专业、班级均返回实时 `memberCount`（未注销的教师/学生人数），前端据此只对 `memberCount=0` 的节点提供删除入口。
 
 ```json
 {
@@ -216,12 +222,13 @@ Authorization: Bearer <accessToken>
       "id": 1,
       "name": "基础医学院",
       "status": 1,
+      "memberCount": 12,
       "majors": [
-        {"id": 2, "departmentId": 1, "name": "临床医学", "status": 1}
+        {"id": 2, "departmentId": 1, "name": "临床医学", "status": 1, "memberCount": 5}
       ],
       "classes": [
-        {"id": 3, "departmentId": 1, "name": "1", "grade": null, "status": 1},
-        {"id": 4, "departmentId": 1, "name": "7", "grade": null, "status": 1}
+        {"id": 3, "departmentId": 1, "name": "1", "grade": null, "status": 1, "memberCount": 0},
+        {"id": 4, "departmentId": 1, "name": "7", "grade": null, "status": 1, "memberCount": 7}
       ]
     }
   ]
@@ -259,6 +266,21 @@ Authorization: Bearer <accessToken>
 - 教师必须填写姓名、工号和所属学院，不得携带专业、班级、班级号或年级。
 - 学生必须填写姓名、学号、所属学院、专业、班级号和年级；专业必须属于所选学院，班级号必须是 1–9999 的整数，相关学院、专业、班级均须处于启用状态。
 - 工号/学号最长 20；年级范围为 2000–2100。未提供初始密码时使用 `ABC` 加登录账号，首次登录必须修改。
+- 登录账号不能以 `#` 开头；`#<id>` 是已注销账号的保留占位名。
+
+#### 删除账号（逻辑删除）
+
+`DELETE /admin/accounts/{id}?role=TEACHER|STUDENT`（也接受 `ROLE_*`）。**仅教师和学生可删，管理员账号不可删**。删除不会物理移除数据行：服务端把登录账号改写为保留占位名 `#<id>`、置 `status=0`、写 `deleted_at`/`deleted_by_admin_id`、递增 `tokenVersion` 并撤销全部 Refresh Token；账号随即从账号分页、工作台计数、组织人数、登录和刷新中消失，课程、分组、提交、成绩与审计历史全部保留。原登录账号释放后可重新创建；`#` 前缀禁止用于新账号。成功返回 `{id, role, username, mode:"LOGICAL_DELETE"}`；账号不存在或已注销返回 404，角色为 `ADMIN` 返回 400。已注销账号无法再编辑、启停或重置密码（相应接口返回 404）。删除会写 `ACCOUNT_DELETED` 审计事件。
+
+#### 删除空组织
+
+`DELETE /admin/organization/{type}/{id}`，`type` 取 `department`、`major` 或 `class`（也接受中文名称）。仅当节点**没有成员、没有子节点、也没有业务引用**时才物理删除：
+
+- 班级：无未注销学生、无 `group_table.class_id` 引用；
+- 专业：无未注销学生、无下属班级、无 `course.major_id` / `course_major` / `group_table.major_id` 引用；
+- 院系：无未注销教师、无下属专业或班级。
+
+有引用时返回 409 并列出具体数量（如「该班级仍有引用，不能删除：7名在册学生、2个关联小组」），节点不存在返回 404，类型不合法返回 400。成功返回 `{id,type,name}` 并写 `ORGANIZATION_DELETED` 审计事件。前端组织树只在 `memberCount=0` 时显示删除按钮，服务端始终重新校验。
 
 - `displayName` 也接受别名 `name`；最长 50。
 - `initialPassword` 可省略；若提供须为 8–64 位且含字母和数字。
@@ -304,17 +326,17 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 ```json
 {
-  "modelKey": "paper-score-p4",
-  "version": "xgb-p4-seed2025-172a3cf9486e",
-  "artifactUri": "algorithm-service://artifacts/xgboost-model.json",
-  "artifactSha256": "172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d",
-  "featureSchemaJson": "[\"contribution\",\"actual_group_size\",\"group_score\"]",
-  "hyperparametersJson": "{\"random_state\":2025,\"n_estimators\":800,\"max_depth\":6}",
-  "metricsJson": "{\"status\":\"ELIGIBLE\",\"holdout\":{\"rmse\":0.4828993804,\"mae\":0.3568366849,\"r2\":0.9997004404},\"eligibility\":{\"passed\":true}}"
+  "modelKey": "smoothstep-score",
+  "version": "smoothstep-xgb-a2b2c30a05b1",
+  "artifactUri": "algorithm-service://artifacts/score-model.joblib",
+  "artifactSha256": "a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644",
+  "featureSchemaJson": "[\"标准人数\",\"个人贡献度\",\"作业总分\"]",
+  "hyperparametersJson": "{\"n_estimators\":150,\"max_depth\":5,\"learning_rate\":0.07,\"random_state\":42}",
+  "metricsJson": "{\"status\":\"ELIGIBLE\",\"holdout\":{\"rmse\":0.8942731732,\"mae\":0.6381276982,\"r2\":0.9992094930}}"
 }
 ```
 
-三个 `*Json` 字段必须是 JSON 文本。生产注册契约固定 `modelKey=paper-score-p4`，`artifactUri` 必须匹配 `algorithm-service://artifacts/*.json`，特征数组必须严格按 `contribution, actual_group_size, group_score` 排列，`hyperparametersJson` 必须是对象。`metricsJson` 按 `holdout`、`test`、顶层的顺序读取指标；准入条件为有限且非负的 `RMSE <= 1.0`、`MAE <= 0.8`，以及 `0.99 <= R² <= 1`。若提供 `status`，它必须为 `ELIGIBLE`；若提供 `eligibility.passed`，它不能为 `false`。
+三个 `*Json` 字段必须是 JSON 文本。生产注册契约固定 `modelKey=smoothstep-score`，`artifactUri` 必须匹配 `algorithm-service://artifacts/*.joblib`（旧 `*.json` 产物已下架），特征数组必须严格按 `标准人数, 个人贡献度, 作业总分` 排列，`hyperparametersJson` 必须是对象。`metricsJson` 按 `holdout`、`test`、顶层的顺序读取指标；准入条件为有限且非负的 `RMSE <= 1.0`、`MAE <= 0.8`，以及 `0.99 <= R² <= 1`。若提供 `status`，它必须为 `ELIGIBLE`；若提供 `eligibility.passed`，它不能为 `false`。
 
 制品元数据中的 `ELIGIBLE` 表示评估准入结论；管理数据库注册成功后返回的生命周期状态仍为 `VALIDATED`。只有 `VALIDATED` 或 `RETIRED` 版本可激活；激活同一 `modelKey` 的版本会先把原 `ACTIVE` 版本置为 `RETIRED`，因此再次激活旧版本就是受控回滚。
 
@@ -347,7 +369,14 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `POST /teacher/courses` | `CourseCreateRequest` | `{id,name,status:"ACTIVE"}` | **201** |
 | `GET /teacher/courses/{courseId}/assignments` | 无 | 作业数组 | 200 |
 | `GET /teacher/courses/{courseId}/students` | `assignmentId?` | 课程学生候选数组 | 200 |
-| `POST /teacher/courses/{courseId}/assignments` | `AssignmentCreateRequest` | `{id,status:"DRAFT"}` | **201** |
+| `GET /teacher/courses/{courseId}/classes` | `keyword?` | 系统班级库数组 | 200 |
+| `GET /teacher/courses/{courseId}/classes/{classId}/students` | 无 | 班级学生名册数组 | 200 |
+| `POST /teacher/courses/{courseId}/students/import` | `StudentImportRequest` | `StudentCourseUpdateResult` | 200 |
+| `DELETE /teacher/courses/{courseId}/students/{studentId}` | 无 | `null` | 200 |
+| `POST /teacher/courses/{courseId}/assignments` | `AssignmentCreateRequest` | `{id,status:"PUBLISHED"}` | **201** |
+| `GET /teacher/assignments/{assignmentId}` | 无 | 作业详情（含评价分支与锁定标记） | 200 |
+| `PUT /teacher/assignments/{assignmentId}` | `AssignmentUpdateRequest` | `null` | 200 |
+| `DELETE /teacher/assignments/{assignmentId}` | 无 | `null` | 200 |
 | `POST /teacher/assignments/{assignmentId}/publish` | 无 | `null` | 200 |
 | `GET /teacher/assignments/{assignmentId}/groups` | 无 | 团队数组 | 200 |
 | `GET /teacher/assignments/{assignmentId}/groups/{groupId}/members` | 无 | 团队成员数组 | 200 |
@@ -358,9 +387,26 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 `CourseCreateRequest`：`name` 必填；`code`、`term`、`grade`、`beginDate`、`endDate` 可选。课程代码必须唯一，结束日期不能早于开始日期。
 
-教师作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`createdAt`、`groupCount`、`submissionCount`。
+教师作业项：`id`、`title`、`description`、`deadline`、`status`、`publishedAt`、`totalScore`、`standardGroupSize`、`createdAt`、`groupCount`、`submissionCount`、`submittedGroupCount`、`pendingReviewCount`。列表排除 `ARCHIVED`（已删除）作业。`submissionCount` 是累计提交次数（含同一团队历次重交），只用于展示份数；`submittedGroupCount` 是存在当前有效提交（`is_latest=1`）的团队数，`pendingReviewCount` 是其中 `teacher_score` 为空的团队数。提交进度与待批改指标一律使用后两者，避免把重交次数算成已提交团队数。
 
 课程学生候选项：`studentId`、`studentNo`、`name`、`className`、`majorName`、`assignedToGroup`。提供 `assignmentId` 时，它必须属于路径中的课程，`assignedToGroup` 才表示该学生是否已加入该作业的有效团队；不提供时该字段为 `false`。接口先校验当前教师拥有课程，不能作为跨教师学生名册查询。
+
+**从系统班级库批量导入学生**（教师端「学生管理 → 导入学生」）：
+
+- 班级库由管理员在「组织与账号」或账号 CSV 导入时维护，教师端只读、不创建班级。班级按 `V6` 的「院系下班级唯一」规范组织，`class.major_id` 已废弃，不按专业过滤班级；两个查询接口都先校验课程归属，不能跨教师查询名册。
+- `GET /teacher/courses/{courseId}/classes?keyword=` 返回启用中的班级：`id`、`name`、`grade`、`departmentId`、`departmentName`、`studentCount`（该班有效账号数）、`enrolledCount`（其中已在当前课程且 `ACTIVE` 的人数）。`studentCount - enrolledCount` 即本次预计导入人数；`keyword` 匹配班级名、院系名或年级。
+- `GET /teacher/courses/{courseId}/classes/{classId}/students` 返回该班有效学生名册：`studentId`、`studentNo`、`name`、`majorName`、`enrolled`（是否已在当前课程）。仅供导入前预览，不分页；班级不存在或已停用返回 404。
+- `POST /teacher/courses/{courseId}/students/import` 请求体 `StudentImportRequest`：
+
+```json
+{ "classIds": [1, 2], "studentNos": ["20260099"] }
+```
+
+  - `classIds` 最多 50 个且必须是 `ACTIVE` 班级；`studentNos` 最多 500 个、每个最长 20 字符。两者至少提供一个，可同时使用；旧客户端仍可只发送 `{ "studentNos": [...] }`。
+  - 服务端把班级展开为有效学生账号（`status=1`），与学号解析结果按 `studentId` 去重合并；合并后单次最多 2000 人，超出返回 400 并要求分批。
+  - 已在课程且 `ACTIVE` 的跳过，`DROPPED`/`INACTIVE` 的重新激活（`join_method='IMPORT'`）；学号查不到账号的记入 `notFound`，不阻断其余导入。
+  - 响应 `StudentCourseUpdateResult` 为 `{success, skipped, notFound: string[]}`；写入 `STUDENTS_IMPORTED` 审计，记录成功/跳过/未找到数量与所选班级 ID。
+- `DELETE /teacher/courses/{courseId}/students/{studentId}` 把 `student_course.status` 置为 `DROPPED`，不删除学生账号。前端按学号在本地名单中解析出 `studentId` 后调用。
 
 创建作业：
 
@@ -381,7 +427,34 @@ role,username,displayName,department,major,class,grade,initialPassword
 - 标题最长 200，描述最长 5000，截止时间必须在未来。
 - `standardGroupSize` 为 1–4，`totalScore` 为 1–100。
 - 至少一个分支；分支名称最长 255 且忽略大小写后不能重复，描述最长 2000，单项权重 `0..1`，总和在 `1e-6` 容差内等于 1。
-- 只有 `DRAFT` 可发布。
+- 创建后即为 `PUBLISHED` 并同时写入 `ASSIGNMENT_CREATED`、`ASSIGNMENT_PUBLISHED` 审计；`publish` 接口只用于把历史 `DRAFT` 数据改为 `PUBLISHED`。
+
+### 5.2 查看、编辑与删除作业
+
+`GET /teacher/assignments/{assignmentId}` 返回作业基础字段、`courseId`、`groupCount`、`submissionCount`，以及：
+
+```json
+{
+  "partsLocked": false,
+  "scorePublished": false,
+  "parts": [
+    {"id": 11, "name": "资料检索", "description": "证据检索", "weight": 0.3, "sortOrder": 1}
+  ]
+}
+```
+
+`partsLocked` 表示作业已有团队、工作量、提交或评分运行记录；`scorePublished` 表示已有发布的成绩。前端据此禁用对应控件，服务端也会独立校验，不信任前端。
+
+`PUT` 使用 `AssignmentUpdateRequest`，字段与 `AssignmentCreateRequest` 相同（`branches` 为完整列表而非增量）。约束：
+
+- 作业必须属于当前教师且未归档；否则分别返回 404 / 409。
+- 权重总和与分支名唯一性规则和创建一致。
+- `partsLocked=true` 时，评价分支（名称、权重、数量）与 `standardGroupSize` 必须与库中现有值一致，否则 409；此时服务端不会重写 `assignment_parts`，避免破坏 W/Q 矩阵与已算出的贡献。
+- `scorePublished=true` 时 `totalScore` 不得修改，否则 409。
+- 截止时间可原样保留（即使已过期）；一旦改为其他值，必须晚于当前时间，否则 400。
+- 成功后写入 `ASSIGNMENT_UPDATED` 审计，记录 `courseId`、`partsLocked` 和分支数。
+
+`DELETE` 是**归档而非物理删除**：把 `assignment.status` 置为 `ARCHIVED`，写入 `ASSIGNMENT_ARCHIVED` 审计，不改动任何提交、团队、评分、快照或审计记录。理由是多张下游表对 `assignment` 使用 `ON DELETE RESTRICT`，且已发布评分与审计只追加。归档后：教师作业列表不再返回；学生端作业列表/详情只认 `PUBLISHED`/`CLOSED`，因此不可见；已发布成绩仍通过 `score_result.status='PUBLISHED'` 查询得到，可继续追溯。学生成绩页提供申诉入口，不依赖作业详情页，归档作业后仍可申诉。重复删除或编辑已归档作业返回 409。
 
 团队项：`id`、`name`、`status`、`teamStatus`、`maxMembers`、`leaderName`、`memberCount`。
 
@@ -400,7 +473,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 组长会自动并入去重后的成员集合；成员总数不得超过 `p+1`，必须都在该课程有效名单中，且不能已经加入该作业其他有效团队。当前接口不要求最少达到 `p` 人。
 
-提交列表项：`id`、`assignmentId`、`groupId`、`groupName`、`content`、`filePath`、`note`、`submitTime`、`status`、`teacherScore`、`teacherComment`、`scorePublished`。`filePath` 是受控 `storageKey`，查看附件必须调用 `GET /files?key=...`，不能直接拼接静态路径。
+提交列表项：`id`、`assignmentId`、`groupId`、`groupName`、`leaderName`、`content`、`filePath`、`note`、`submitTime`、`status`、`teacherScore`、`teacherComment`、`scorePublished`、`attachments`。`leaderName` 是组长姓名，优先取 `group_table.leader_student_id` 对应学生；历史小组未写该字段时回退到 `group_member` 中 `ACTIVE` 且 `role='LEADER'` 的成员，仍没有则为 `null`（教师批改页只显示组名）。批改页将其显示为「第10组——演示学生05」。`filePath` 是受控 `storageKey`，查看附件必须调用 `GET /files?key=...`，不能直接拼接静态路径。
 
 ### 5.2 评分接口 `TeacherScoringController`
 
@@ -516,11 +589,19 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `GET /student/courses/{courseId}/assignments` | 无 | 作业数组 | 200 |
 | `GET /student/groups` | 无 | 团队数组 | 200 |
 | `GET /student/groups/{groupId}/members` | 无 | 本人团队成员数组 | 200 |
+| `POST /student/assignments/{assignmentId}/draft-attachments` | `DraftAttachmentRequest` | `null` | 201 |
+| `DELETE /student/assignments/{assignmentId}/attachments/{attachmentId}` | 无 | `null` | 200 |
 | `POST /student/assignments/{assignmentId}/submission` | `StudentSubmissionRequest` | `null` | 200 |
 
 课程项：`id`、`code`、`name`、`term`、`grade`、`beginDate`、`endDate`、`teacherName`。
 
-作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`submitted`。只返回学生有效选课中已发布/结束态作业。
+作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`teamFormation`、`submitted`、`scorePublished`。只返回学生有效选课中已发布/结束态作业。`teamFormation` 为兼容旧客户端保留，**恒为 `false`**：系统已取消「发布后 2 天组队期」，不再有独立的组队阶段。
+
+**统一窗口（发布 → 截止）**：作业发布后到 `deadline` 之前，学生随时可以创建/加入/退出小组、填写并确认工作量分配、登记附件、提交作业；加入小组后即可直接填写工作量与提交，无需等待任何组队期。到达 `deadline` 后学生端所有写操作（建组、加入、退出、分工提交与确认、附件登记与删除、作业提交）统一返回 409。截止时尚未全员确认的工作量版本由后端自动锁定（见 6.2）；教师端保留补录分工的入口，否则从未填写分工的小组将永远无法评分，教师补录的新版本同样会进入截止自动锁定。前端不应再用 `publishedAt + 2 天` 自行推算组队期。
+
+**提交是小组级资源，不是成员级资源**：`submission` 由唯一键 `(assignment_id, group_id, is_latest)` 约束，一个小组同一作业只有一条当前提交。任意 `ACTIVE` 成员提交后，该组所有成员的作业列表与作业详情都会读到同一个 `submitted=true`、`content`、`submitNote`、`attachments` 和 `submissionStatus`（`content` 与 `submitNote` 是同一段「提交说明」的两个兼容字段，见下文）；`submitterId` 只记录是谁点的提交，不决定可见性。列表的 `submitted` 与 `scorePublished` 都通过 `group_member` 关联本组，并排除 `DRAFT`（只上传了草稿附件不算已提交）；`scorePublished` 只认本组 `scoring_run`，不会因其他小组发布成绩而把全作业学生变成"已批阅"。
+
+作业详情另外返回 `groupId`、`groupName`、`memberRole`、`members`、`parts`、`filePath`、`submitterId`、`submitTime`、`submitNote`、`submissionStatus`、`submitted`、`teacherScore`、`teacherComment`、`attachments`。`submissionStatus` 取值 `DRAFT / SUBMITTED / RETURNED / GRADED / ARCHIVED`；`RETURNED` 仍属于"已提交过"，但前端提示重新提交。`attachments` 按本组 `ACTIVE` 成员关系返回，不按上传者过滤，组内每个成员都能列出并下载。
 
 团队项：`id`、`name`、`assignmentId`、`teamStatus`、`leaderStudentId`。成员详情字段与教师端一致；后端要求当前学生是该未解散团队的有效成员，否则返回 404。
 
@@ -528,13 +609,24 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 ```json
 {
-  "content": "团队报告正文",
+  "content": "本次完成 KNN 实验，报告与代码见附件",
   "filePath": "2026/07/student/101/uuid.pdf",
-  "note": "最终版"
+  "note": "本次完成 KNN 实验，报告与代码见附件",
+  "attachments": [
+    {
+      "storageKey": "2026/07/student/101/7fb0c3f0-....pdf",
+      "originalName": "团队报告.pdf",
+      "fileSize": 120045
+    }
+  ]
 }
 ```
 
-`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。正文和附件至少一项非空；学生必须属于该作业有效团队；作业必须已发布且未过截止时间。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
+`attachments` 最多 20 项，每项必须是当前学生账号上传得到的 `storageKey`（`年/月/student/{id}/{uuid}.{ext}` 格式）。`originalName` 与 `fileSize` 直接取 `POST /files` 返回的 `originalName` 与 `size`，服务端清洗后写入 `submission_attachment`，教师端列表和下载响应头都使用这个名字。旧客户端仍可只传字符串数组 `["2026/07/student/101/uuid.pdf"]`，此时数据库只记录存储文件名，前端会回退展示为「附件 N.ext」；新实现不要再用这种形式，否则教师看到的仍是 UUID 文件名。同一 `storageKey` 重复提交时按唯一键更新文件名与大小。
+
+**草稿附件（组内协作阶段，推荐路径）**：学生上传文件后应立即调用 `POST /student/assignments/{assignmentId}/draft-attachments`，请求体为 `{"storageKey":"...","originalName":"报告.pdf","fileSize":120045}`。服务端校验 `storageKey` 必须由当前学生账号上传（`年/月/student/{id}/{uuid}.{ext}`）且该学生属于该作业有效团队的 `ACTIVE` 成员，然后确保存在一条 `status='DRAFT'` 的最新提交并把附件写入 `submission_attachment`。**此时附件全组成员都能列出和下载，教师侧的提交列表、附件列表与下载权限都排除 `DRAFT`。** 点击「提交作业」时 `POST .../submission` 会把同一条提交从 `DRAFT` 改为 `SUBMITTED`，附件无需重传即转为教师可见，同时全组成员的 `submitted` 一起变为 `true`；草稿附件计入「提交说明或附件至少一项」校验。作业详情的 `submissionStatus='DRAFT'` 不代表已提交。若团队已正式提交过，再登记附件会直接挂在该提交上并立即对教师可见。`DELETE .../attachments/{attachmentId}` 允许本组 `ACTIVE` 成员在**提交窗口内（未过 `deadline`、未批阅、成绩未发布）**删除本组当前最新提交（`DRAFT`/`SUBMITTED`/`RETURNED`）的任意附件，包含「重新提交」编辑态下先前已提交的附件；服务端先用与作业详情一致的 `studentGroup` 解析 `groupId`，再按 `sa.id + assignment_id + group_id + is_latest=1` 定位，避免删到别组附件。进入 `GRADED`、成绩已发布或超过 `deadline` 后附件冻结（删除返回 404／409）。删除后全组成员重新拉取详情即同步；上传者本人仍可通过 `GET /files?key=...` 读取自己账号目录下的文件。
+
+**提交说明就是提交内容，界面上没有单独的「正文」字段**：学生端只有一个「提交说明」输入框，前端把它同时写入 `content` 与 `note`；后端在 `content` 为空时用 `note` 兜底（兼容只传 `note` 的旧客户端），因此 `submission.content` 与 `submission.submit_note` 保存同一段文本，教师端与作业详情读到的都是这段说明。只填写提交说明、一个附件都不传也能提交成功；反之只有附件没有说明同样可以提交。`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。「提交说明或附件至少一项非空」，「已有附件」按当前最新提交上的附件数统计、不再限定 `DRAFT`，因此附件型小组重新提交、或删掉部分附件后重新提交都不需要重传全部文件；两者都为空时返回 400「请填写提交说明或上传附件」。学生必须属于该作业有效团队；作业必须已发布且未过截止时间（不再校验「组队期已结束」）。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
 
 提交作业不再接收或写入工作量份额。旧版兼容字段 `contributionScores`（每名成员一个总贡献百分比）仅在该团队尚不存在 `LOCKED` 或 `PENDING_CONFIRMATION` 工作量版本时才会被处理，前端不应再传；按评价分支的 `Q` 份额一律通过 6.2 的工作量接口提交。这样提交作业不会覆盖矩阵明细，发起评分仍要求存在全员确认后锁定的工作量版本。
 
@@ -549,7 +641,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `GET /student/appeals` | 无 | 本人申诉数组 | 200 |
 | `POST /student/scores/{scoreResultId}/appeals` | `AppealCreateRequest` | `null` | 200 |
 
-团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和。工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`myConfirmation`、`comment`，以及 `items` 和 `objections` 数组。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。`objections` 为当前版本的异议列表，字段 `studentId`、`studentName`、`comment`、`confirmedAt`；非空表示该版本已退回组长修改，不能再被确认。
+团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和。工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`myConfirmation`、`comment`、`autoLocked`，以及 `items` 和 `objections` 数组。`autoLocked=true` 表示该版本不是全员确认锁定，而是在 `assignment.deadline` 到达时由系统按截止时间自动锁定（对比 `locked_at >= deadline` 得出）；此时仍未确认的 `workload_confirmation` 保持 `PENDING`，但版本已是 `LOCKED`、不可再编辑或确认，评分会采用该版本。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。`objections` 为当前版本的异议列表，字段 `studentId`、`studentName`、`comment`、`confirmedAt`；非空表示该版本已退回组长修改，不能再被确认。
 
 确认请求：
 
@@ -557,7 +649,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 {"status":"OBJECTED","comment":"第二分支的份额与实际记录不一致"}
 ```
 
-状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 时可操作；全部成员确认后服务端自动锁定。任意成员提交 `OBJECTED` 后该版本暂停确认，其余成员再提交 `CONFIRMED` 返回 409；组长据异议修改份额并重新提交方案时，旧的 `PENDING_CONFIRMATION` 版本被置为 `SUPERSEDED`，新版本重新进入全员确认，评分只采用 `LOCKED` 版本。
+状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 且作业未过截止时间时可操作；全部成员确认后服务端自动锁定，作业截止时未确认的版本也会自动锁定，两种情况之后所有提交/确认接口返回 409。任意成员提交 `OBJECTED` 后该版本暂停确认，其余成员再提交 `CONFIRMED` 返回 409；组长据异议修改份额并重新提交方案时，旧的 `PENDING_CONFIRMATION` 版本被置为 `SUPERSEDED`，新版本重新进入全员确认，评分只采用 `LOCKED` 版本。
 
 成绩数组只包含 `PUBLISHED` 项，字段：`scoreResultId`、`assignmentId`、`assignmentTitle`、`courseName`、`groupName`、`groupScore`、`contribution`、`ruleScore`、`modelScore`、`finalScore`、`explanation`、`scoringSnapshot`、`reviewReason`、`publishedAt`、`runNo`、`modelVersion`、`ruleVersion`。`finalScore` 优先取最新 `score_revision`，原始已发布 `score_result` 不被覆盖。
 
@@ -582,37 +674,38 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `GET /v1/model` | `Bearer ALGORITHM_SERVICE_TOKEN` | 返回模型可用性、metadata、metrics 和哈希清单。 |
 | `POST /v1/predict` | 同上 | 批量规则/模型预测，1–1000 项。 |
 
-预测请求：
+预测请求（`items` 1–1000 项；`contribution` 为 0–1 的比例，`groupScore` 为 0–100 的分数，`standardGroupSize` 为 1–4）：
 
 ```json
 {
   "items": [
     {
       "studentId": "101",
-      "contribution": 0.62,
-      "standardGroupSize": 4,
-      "actualGroupSize": 4,
-      "groupScore": 80
+      "contribution": 0.6,
+      "standardGroupSize": 2,
+      "groupScore": 60
     }
   ]
 }
 ```
 
+请求体 `extra="forbid"`：**不再有 `actualGroupSize`**，附带该字段会返回 422。模型覆盖 `p=1..4` 全部标准组规模，没有 `p=4` 门控。
+
 预测响应：
 
 ```json
 {
-  "ruleVersion": "paper-mcqs-v1",
-  "modelVersion": "xgb-p4-seed2025-...",
-  "artifactSha256": "172a3cf9486e2fa88c0d37c0401844521abdf426a6f17bf66271edb2154c162d",
+  "ruleVersion": "smoothstep-v1",
+  "modelVersion": "smoothstep-xgb-a2b2c30a05b1",
+  "artifactSha256": "a2b2c30a05b13b557748825f2d356c4563b1903edf4c53168c1bb46ee0e83644",
   "items": [
     {
       "studentId": "101",
-      "ruleScore": 85.2,
-      "modelScore": 85.5,
-      "finalSuggestion": 85.5,
+      "ruleScore": 62.08,
+      "modelScore": 61.82,
+      "finalSuggestion": 61.82,
       "mode": "model",
-      "delta": 0.3,
+      "delta": 0.26,
       "anomaly": false,
       "explanation": "xgboost_prediction"
     }
@@ -620,7 +713,9 @@ role,username,displayName,department,major,class,grade,initialPassword
 }
 ```
 
-`mode` 为 `model`、`rule_fallback` 或 `rule_only`。Java 同时校验 `ruleVersion`、`modelVersion`、`artifactSha256`、成员集合和分数范围，任一不匹配整批回退规则分。未配置内部 Token 时 `/v1/*` 返回 503，Token 错误返回 401，请求校验失败返回 FastAPI 422。
+`mode` 只有 `model` 与 `rule_fallback` 两种，**不再返回 `rule_only`**；`modelVersion`/`artifactSha256` 在模型不可用时为 `null`。所有 `ruleScore`、`modelScore`、`finalSuggestion` 均裁剪在 `0..100`，超出范围的请求值直接被拒。Java 同时校验 `ruleVersion`、`modelVersion`、`artifactSha256`、成员 ID 集合和分数范围，任一不匹配整批回退规则分；`|modelScore − ruleScore| > 2` 才标 `anomaly=true`。未配置内部 Token 时 `/v1/*` 返回 503，Token 错误返回 401，请求校验失败返回 FastAPI 422。
+
+Java 保存的 `explanation` JSON 字段为：`ruleVersion`、`branch`（`LOW_CONTRIBUTION`/`HIGH_CONTRIBUTION`）、`threshold`（`1/p`）、`contribution`、`normalizedContribution`、`boostCap`（20）、`scoreRange`（`[0,100]`）、`mode`、`modelExplanation`、`assumption`。其中不再有 `baseline`、`effectiveContribution`、`p4AffineTransformApplied`。
 
 ## 8. 当前明确没有的接口
 

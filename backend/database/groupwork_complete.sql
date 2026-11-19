@@ -8,7 +8,10 @@
 --   * all teacher/student demo accounts are disabled and require password reset;
 --   * the shared BCrypt value is an intentionally unknown password hash;
 --   * token_version starts at 0 for account and refresh-token invalidation;
---   * the XGBoost model is VALIDATED metadata, not an automatically active model;
+--   * the XGBoost model row is legacy paper-score-p4 VALIDATED metadata, not active;
+--   * this snapshot predates the smoothstep-v1 rule; import it only into an empty
+--     database and then let Flyway V7 retire the old rule/model and register
+--     score-model.joblib. Published score_result rows are intentionally unchanged;
 --   * accepted score changes are recorded append-only in score_revision.
 --
 -- Existing deployments should apply the Flyway migration instead of importing

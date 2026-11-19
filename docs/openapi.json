@@ -139,6 +139,7 @@
           "teacher-scoring-controller"
         ],
         "operationId": "createWorkload",
+        "description": "截止后学生端冻结；教师仍可为本组补录分工版本，该版本会由截止自动锁定，供评分使用。",
         "parameters": [
           {
             "name": "assignmentId",
@@ -230,6 +231,7 @@
           "student-scoring-controller"
         ],
         "operationId": "confirmWorkload",
+        "description": "截止后未全员确认的分工版本由系统自动锁定，本接口在 deadline 之后返回 409。",
         "parameters": [
           {
             "name": "setId",
@@ -271,6 +273,7 @@
           "student-scoring-controller"
         ],
         "operationId": "proposeWorkload",
+        "description": "加入小组后即可提交工作量分配，无需等待组队期；作业截止后返回 409，未确认版本自动锁定。",
         "parameters": [
           {
             "name": "assignmentId",
@@ -387,6 +390,45 @@
       }
     },
     "/api/v1/admin/accounts/{id}": {
+      "delete": {
+        "tags": [
+          "admin-controller"
+        ],
+        "operationId": "deleteAccount",
+        "description": "仅教师和学生账号可删除，采用逻辑删除（注销）：账号行与课程、分组、提交、成绩历史保留，登录名改为 #<id> 占位、status 置 0、tokenVersion 递增并撤销全部 Refresh Token；账号从列表、计数和登录中消失，原登录名可复用。账号不存在或已注销返回 404，删除管理员账号返回 400。",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": true,
+            "description": "TEACHER / STUDENT，也接受 ROLE_TEACHER / ROLE_STUDENT",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMapStringObject"
+                }
+              }
+            }
+          }
+        }
+      },
       "put": {
         "tags": [
           "admin-controller"
@@ -420,6 +462,51 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/organization/{type}/{id}": {
+      "delete": {
+        "tags": [
+          "admin-controller"
+        ],
+        "operationId": "deleteOrganization",
+        "description": "仅删除无成员、无子节点且无课程/小组等业务引用的组织节点；有引用返回 409 并列出数量，节点不存在返回 404，类型不合法返回 400。组织概况返回实时 memberCount，前端据此显示删除入口。",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "department",
+                "major",
+                "class"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMapStringObject"
                 }
               }
             }
@@ -602,6 +689,108 @@
         }
       }
     },
+    "/api/v1/teacher/assignments/{assignmentId}": {
+      "get": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "assignmentDetail",
+        "summary": "查看作业详情，含评价分支、下游数据锁定状态与已发布成绩状态",
+        "parameters": [
+          {
+            "name": "assignmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMapStringObject"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "updateAssignment",
+        "summary": "编辑作业；已有团队、工作量、提交或评分记录时锁定评价分支与标准人数",
+        "parameters": [
+          {
+            "name": "assignmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "deleteAssignment",
+        "summary": "删除作业：归档而不物理删除，学生端不再可见，提交、评分与审计记录保留",
+        "parameters": [
+          {
+            "name": "assignmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/assignments/{assignmentId}/publish": {
       "post": {
         "tags": [
@@ -744,12 +933,111 @@
         }
       }
     },
+    "/api/v1/student/assignments/{assignmentId}/draft-attachments": {
+      "post": {
+        "tags": [
+          "student-controller"
+        ],
+        "operationId": "registerDraftAttachment",
+        "description": "上传后登记为小组内可见的草稿附件；教师侧在团队正式提交前不可见。",
+        "parameters": [
+          {
+            "name": "assignmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "storageKey"
+                ],
+                "properties": {
+                  "storageKey": {
+                    "type": "string"
+                  },
+                  "originalName": {
+                    "type": "string"
+                  },
+                  "fileSize": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/student/assignments/{assignmentId}/attachments/{attachmentId}": {
+      "delete": {
+        "tags": [
+          "student-controller"
+        ],
+        "operationId": "deleteAttachment",
+        "description": "提交窗口内（截止前、未批阅、成绩未发布）本组 ACTIVE 成员可删除当前最新提交（DRAFT/SUBMITTED/RETURNED）的任意附件，包含重新提交编辑态中先前已提交的附件；按服务端解析的 groupId 定位，GRADED 或已发布后冻结。",
+        "parameters": [
+          {
+            "name": "assignmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/student/assignments/{assignmentId}/submission": {
       "post": {
         "tags": [
           "student-controller"
         ],
         "operationId": "submit",
+        "description": "提交是小组级资源：一个小组同一作业只有一条当前提交，任意 ACTIVE 成员提交后全组成员共享同一状态、提交说明与附件。学生端只有一个「提交说明」输入框，填写说明即可提交，附件完全可选；说明同时写入 content 与 note，content 为空时服务端用 note 兜底。说明与附件都为空返回 400。无组队期：作业发布后到 deadline 之前，加入小组即可分工与提交；截止后本接口返回 409。",
         "parameters": [
           {
             "name": "assignmentId",
@@ -791,6 +1079,7 @@
           "file-controller"
         ],
         "operationId": "download",
+        "description": "必须携带 Authorization: Bearer <access token>，不能用裸链接跳转；响应文件名取自 submission_attachment.original_name。",
         "parameters": [
           {
             "name": "key",
@@ -829,6 +1118,10 @@
                   "file": {
                     "type": "string",
                     "format": "binary"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "原始文件名的 encodeURIComponent 结果（纯 ASCII），用于规避 multipart 中文文件名误解码；可选"
                   }
                 },
                 "required": [
@@ -1298,6 +1591,170 @@
         }
       }
     },
+    "/api/v1/teacher/courses/{courseId}/classes": {
+      "get": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "importableClasses",
+        "summary": "查询系统班级库，供课程按班级批量导入学生",
+        "parameters": [
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseListMapStringObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/courses/{courseId}/classes/{classId}/students": {
+      "get": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "classRoster",
+        "summary": "预览某班级的学生名册及其在当前课程的导入状态",
+        "parameters": [
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "classId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseListMapStringObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/courses/{courseId}/students/import": {
+      "post": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "importStudents",
+        "summary": "批量导入学生：按班级库整班导入，或按学号补充导入",
+        "parameters": [
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseStudentCourseUpdateResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/courses/{courseId}/students/{studentId}": {
+      "delete": {
+        "tags": [
+          "teacher-controller"
+        ],
+        "operationId": "dropStudent",
+        "summary": "把学生从当前课程移除（名单置为 DROPPED，不删除账号）",
+        "parameters": [
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "studentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/courses/{courseId}/students": {
       "get": {
         "tags": [
@@ -1557,6 +2014,7 @@
           "student-scoring-controller"
         ],
         "operationId": "workload_1",
+        "description": "返回本组最新工作量版本；autoLocked=true 表示该版本在截止时间自动锁定（含未确认成员），而非全员确认锁定。读取时会触发截止自动锁定兜底。",
         "parameters": [
           {
             "name": "assignmentId",
@@ -2254,6 +2712,50 @@
           "title"
         ]
       },
+      "AssignmentUpdateRequest": {
+        "type": "object",
+        "description": "编辑作业；评价分支需提交完整列表。已有下游数据时分支与标准人数锁定，成绩发布后总分锁定。",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 0
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000,
+            "minLength": 0
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "standardGroupSize": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4,
+            "minimum": 1
+          },
+          "totalScore": {
+            "type": "number",
+            "format": "double",
+            "maximum": 100,
+            "minimum": 1
+          },
+          "branches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BranchRequest"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "branches",
+          "deadline",
+          "title"
+        ]
+      },
       "BranchRequest": {
         "type": "object",
         "properties": {
@@ -2327,13 +2829,76 @@
           "reason"
         ]
       },
+      "StudentImportRequest": {
+        "type": "object",
+        "description": "课程学生导入：按系统班级库批量导入，或按学号补充导入；两者至少提供一个",
+        "properties": {
+          "classIds": {
+            "type": "array",
+            "description": "系统班级库中的班级 ID，最多 50 个；导入其下全部有效学生账号",
+            "maxItems": 50,
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          },
+          "studentNos": {
+            "type": "array",
+            "description": "学号列表，最多 500 个；兼容旧客户端与个别补录",
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "maxLength": 20
+            }
+          }
+        }
+      },
+      "StudentCourseUpdateResult": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "notFound": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ApiResponseStudentCourseUpdateResult": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StudentCourseUpdateResult"
+          },
+          "requestId": {
+            "type": "string"
+          }
+        }
+      },
       "StudentSubmissionRequest": {
         "type": "object",
         "properties": {
           "content": {
             "type": "string",
             "maxLength": 20000,
-            "minLength": 0
+            "minLength": 0,
+            "description": "提交说明的兼容别名，与 note 应为同一段文本；留空时服务端用 note 填入"
           },
           "filePath": {
             "type": "string",
@@ -2343,7 +2908,49 @@
           "note": {
             "type": "string",
             "maxLength": 1000,
-            "minLength": 0
+            "minLength": 0,
+            "description": "提交说明，即提交内容；填写后无需任何附件即可提交"
+          },
+          "attachments": {
+            "type": "array",
+            "maxItems": 20,
+            "description": "附件列表；兼容旧客户端仅传 storageKey 字符串，新客户端应传含原始文件名与大小的对象",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "$ref": "#/components/schemas/SubmissionAttachmentInput"
+                }
+              ]
+            }
+          },
+          "contributionScores": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "旧版兼容字段，前端不应再传"
+          }
+        }
+      },
+      "SubmissionAttachmentInput": {
+        "type": "object",
+        "description": "作业附件；旧客户端可退化为 storageKey 字符串",
+        "properties": {
+          "storageKey": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "originalName": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "fileSize": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

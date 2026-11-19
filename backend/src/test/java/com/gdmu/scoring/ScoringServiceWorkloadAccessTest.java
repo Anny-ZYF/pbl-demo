@@ -96,4 +96,34 @@ class ScoringServiceWorkloadAccessTest {
 
         assertThat(result.get("objections")).isEqualTo(objections);
     }
+
+    @Test
+    void studentWorkloadNamesMembersWhoHaveNotConfirmedYet() {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("id", 10L);
+        summary.put("status", "PENDING_CONFIRMATION");
+        when(mapper.studentWorkload(7, 3)).thenReturn(summary);
+        when(mapper.workloadItems(10)).thenReturn(List.of());
+        when(mapper.workloadObjections(10)).thenReturn(List.of());
+        when(mapper.workloadConfirmations(10)).thenReturn(List.of(
+                Map.of("studentId", 3L, "studentName", "组长", "status", "CONFIRMED"),
+                Map.of("studentId", 4L, "studentName", "李雷", "status", "PENDING")));
+
+        Map<String, Object> result = service.studentWorkload(leader, 7);
+
+        assertThat(result.get("pendingMembers")).isEqualTo(List.of("李雷"));
+    }
+
+    @Test
+    void studentWorkloadReturnsTheLatestVersionEvenWithoutConfirmationRows() throws Exception {
+        Method method = ScoringMapper.class.getMethod("studentWorkload", long.class, long.class);
+        String sql = String.join(" ", method.getAnnotation(Select.class).value());
+
+        // A LOCKED version created from submission contributions has no confirmation rows;
+        // an INNER JOIN would fall back to a stale SUPERSEDED version and misreport status.
+        assertThat(sql).contains("LEFT JOIN workload_confirmation");
+        assertThat(sql).contains("gm.group_id=ws.group_id");
+        assertThat(sql).contains("gm.status='ACTIVE'");
+        assertThat(sql).contains("ORDER BY ws.version_no DESC LIMIT 1");
+    }
 }
