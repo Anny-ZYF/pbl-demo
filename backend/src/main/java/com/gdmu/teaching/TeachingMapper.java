@@ -478,6 +478,11 @@ public interface TeachingMapper {
     @Select("""
             SELECT g.id,g.name,CAST(SUBSTRING(g.name,2,LENGTH(g.name)-3) AS UNSIGNED) AS groupNo,
                    g.max_members AS maxMembers,COUNT(gm.id) AS memberCount,
+                   COALESCE((SELECT su.name FROM student_users su WHERE su.id=g.leader_student_id),
+                     (SELECT member.name FROM group_member gm2
+                      JOIN student_users member ON member.id=gm2.student_id
+                      WHERE gm2.group_id=g.id AND gm2.status='ACTIVE' AND gm2.role='LEADER'
+                      ORDER BY gm2.id LIMIT 1)) AS leaderName,
                    EXISTS(SELECT 1 FROM submission s WHERE s.group_id=g.id AND s.assignment_id=g.assignment_id
                           AND s.is_latest=1 AND (s.status='GRADED' OR s.is_score_published=1)) AS gradingLocked
             FROM group_table g LEFT JOIN group_member gm ON gm.group_id=g.id AND gm.status='ACTIVE'
@@ -598,21 +603,6 @@ public interface TeachingMapper {
 
     @Select("SELECT id FROM assignment_parts WHERE assignment_id=#{assignmentId} ORDER BY sort_order,id")
     List<Long> assignmentPartIds(long assignmentId);
-    @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status='ACTIVE' ORDER BY student_id")
-    List<Long> activeGroupStudentIds(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
-    @Select("SELECT COUNT(*) FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status IN ('LOCKED','PENDING_CONFIRMATION')")
-    int usableWorkloadSetCount(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
-
-    @Select("SELECT COALESCE(MAX(version_no),0)+1 FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId}")
-    int nextSubmissionWorkloadVersion(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
-    @Update("UPDATE workload_set SET status='SUPERSEDED',updated_at=CURRENT_TIMESTAMP WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND status IN ('DRAFT','PENDING_CONFIRMATION')")
-    int supersedeSubmissionWorkloads(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
-    @Insert("INSERT INTO workload_set(group_id,assignment_id,version_no,status,created_by_student_id,submitted_at,locked_at,created_at,updated_at) VALUES(#{groupId},#{assignmentId},#{version},'LOCKED',#{studentId},CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
-    int insertSubmissionWorkloadSet(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId, @Param("version") int version, @Param("studentId") long studentId);
-    @Select("SELECT id FROM workload_set WHERE group_id=#{groupId} AND assignment_id=#{assignmentId} AND version_no=#{version}")
-    long submissionWorkloadSetId(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId, @Param("version") int version);
-    @Insert("INSERT INTO workload_item(workload_set_id,assignment_part_id,student_id,share,status,created_at,updated_at) VALUES(#{setId},#{partId},#{studentId},#{share},'VERIFIED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
-    int insertSubmissionWorkloadItem(@Param("setId") long setId, @Param("partId") long partId, @Param("studentId") long studentId, @Param("share") java.math.BigDecimal share);
 
     @Select("SELECT a.course_id FROM assignment a JOIN student_course sc ON sc.course_id=a.course_id AND sc.student_id=#{studentId} AND sc.status='ACTIVE' WHERE a.id=#{assignmentId} AND a.status IN ('PUBLISHED','CLOSED')")
     Long assignmentCourseForStudent(@Param("assignmentId") long assignmentId,@Param("studentId") long studentId);

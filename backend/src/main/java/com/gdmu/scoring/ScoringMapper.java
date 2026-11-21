@@ -98,24 +98,24 @@ public interface ScoringMapper {
     @Update("""
             UPDATE workload_set SET status='SUPERSEDED',updated_at=CURRENT_TIMESTAMP
             WHERE group_id=#{groupId} AND assignment_id=#{assignmentId}
-              AND status IN ('DRAFT','PENDING_CONFIRMATION')
+              AND status IN ('DRAFT','PENDING_CONFIRMATION','LOCKED')
             """)
     int supersedeOpenWorkloads(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId);
 
     @Insert("""
             INSERT INTO workload_set(group_id,assignment_id,version_no,status,created_by_teacher_id,
-              submitted_at,created_at,updated_at)
-            VALUES(#{groupId},#{assignmentId},#{version},'PENDING_CONFIRMATION',#{teacherId},CURRENT_TIMESTAMP,
-              CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+              submitted_at,locked_at,created_at,updated_at)
+            VALUES(#{groupId},#{assignmentId},#{version},'LOCKED',#{teacherId},CURRENT_TIMESTAMP,
+              CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
             """)
     int insertWorkloadSet(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId,
                           @Param("version") int version, @Param("teacherId") long teacherId);
 
     @Insert("""
             INSERT INTO workload_set(group_id,assignment_id,version_no,status,created_by_student_id,
-              submitted_at,created_at,updated_at)
-            VALUES(#{groupId},#{assignmentId},#{version},'PENDING_CONFIRMATION',#{studentId},CURRENT_TIMESTAMP,
-              CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+              submitted_at,locked_at,created_at,updated_at)
+            VALUES(#{groupId},#{assignmentId},#{version},'LOCKED',#{studentId},CURRENT_TIMESTAMP,
+              CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
             """)
     int insertStudentWorkloadSet(@Param("groupId") long groupId, @Param("assignmentId") long assignmentId,
                                  @Param("version") int version, @Param("studentId") long studentId);
@@ -143,6 +143,7 @@ public interface ScoringMapper {
 
     @Select("""
             SELECT ws.id,ws.version_no AS versionNo,ws.status,ws.submitted_at AS submittedAt,
+                   ws.locked_at AS lockedAt,
                    wc.status AS myConfirmation,wc.comment,
                    (a.deadline IS NOT NULL AND ws.locked_at IS NOT NULL
                      AND ws.locked_at >= a.deadline) AS autoLocked

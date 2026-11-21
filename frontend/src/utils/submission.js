@@ -33,9 +33,9 @@ export function canRemoveGroupAttachment(attachment, { graded = false } = {}) {
 }
 
 /**
- * The form has exactly one text field: the submit note. It is the submission content, so it is
- * sent as `content` (legacy alias) and `note` (submit_note). Attachments are optional - a
- * filled note alone is enough to submit.
+ * The submission form only carries the submit note (the submission content); attachments are
+ * registered separately and stay optional. The workload allocation is saved through its own
+ * leader-only endpoint and is no longer part of this payload.
  */
 export function buildSubmissionPayload(submitNote = '') {
   const note = String(submitNote ?? '')

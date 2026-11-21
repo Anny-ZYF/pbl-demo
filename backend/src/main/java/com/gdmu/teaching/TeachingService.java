@@ -341,6 +341,8 @@ public class TeachingService {
                                         DraftAttachmentRequest request) {
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.FORBIDDEN, "当前学生不属于该作业的有效团队");
+        require("LEADER".equals(mapper.activeGroupMemberRole(groupId, student.id())),
+                HttpStatus.FORBIDDEN, "只有小组组长可以上传作业附件");
         requireAssignmentOpen(assignmentId, "作业已截止，无法再登记小组附件");
         String normalized = request.storageKey().replace('\\', '/');
         require(normalized.matches("\\d{4}/\\d{2}/student/" + student.id()
@@ -365,6 +367,8 @@ public class TeachingService {
         requireAssignmentOpen(assignmentId, "作业已截止，小组附件已锁定");
         Long groupId = mapper.studentGroup(assignmentId, student.id());
         require(groupId != null, HttpStatus.FORBIDDEN, "当前学生不属于该作业的有效团队");
+        require("LEADER".equals(mapper.activeGroupMemberRole(groupId, student.id())),
+                HttpStatus.FORBIDDEN, "只有小组组长可以移除作业附件");
         require(mapper.deleteStudentAttachment(attachmentId, assignmentId, groupId) == 1,
                 HttpStatus.NOT_FOUND, "附件不存在、不属于本组，或作业已批阅/成绩已发布，不能删除");
     }
@@ -469,10 +473,10 @@ public class TeachingService {
         require(mapper.assignmentDeadline(assignmentId) != null, HttpStatus.CONFLICT,
                 "作业未发布或未设置截止时间");
         requireAssignmentOpen(assignmentId, "作业已截止，无法再提交");
-        if (request.contributionScores() != null
-                && mapper.usableWorkloadSetCount(groupId, assignmentId) == 0) {
-            saveSubmissionContributions(student, assignmentId, groupId, request);
-        }
+        // Only the leader edits the group's submission content and attachments; teammates get
+        // the shared, read-only result. Workload allocation is a separate leader-only endpoint.
+        require("LEADER".equals(mapper.activeGroupMemberRole(groupId, student.id())),
+                HttpStatus.FORBIDDEN, "只有小组组长可以编辑并提交作业");
         // The "submit note" IS the submission content. Older clients only send note, so fold
         // it into content; the UI sends both with the same value. A filled note alone is a
         // valid submission - attachments are optional.
@@ -517,44 +521,6 @@ public class TeachingService {
             }
         }
         auditService.record(student, "SUBMISSION_SAVED", "ASSIGNMENT", assignmentId, Map.of("groupId", groupId));
-    }
-
-    private void saveSubmissionContributions(UserPrincipal student, long assignmentId, long groupId,
-                                             StudentSubmissionRequest request) {
-        Map<Long, java.math.BigDecimal> requested = request.contributionScores();
-        String role = mapper.activeGroupMemberRole(groupId, student.id());
-        if (!"LEADER".equals(role)) {
-            require(requested == null || requested.isEmpty(), HttpStatus.FORBIDDEN,
-                    "只有小组组长可以编辑贡献度");
-            return;
-        }
-        List<Long> members = mapper.activeGroupStudentIds(groupId, assignmentId);
-        require(requested != null && requested.keySet().equals(new java.util.LinkedHashSet<>(members)),
-                HttpStatus.BAD_REQUEST, "请为全部小组成员填写贡献值");
-        java.math.BigDecimal total = java.math.BigDecimal.ZERO;
-        for (Long memberId : members) {
-            java.math.BigDecimal value = requested.get(memberId);
-            require(value != null && value.compareTo(java.math.BigDecimal.ZERO) >= 0
-                            && value.compareTo(java.math.BigDecimal.valueOf(100)) <= 0,
-                    HttpStatus.BAD_REQUEST, "贡献值必须在0到100之间");
-            total = total.add(value);
-        }
-        require(total.subtract(java.math.BigDecimal.valueOf(100)).abs()
-                        .compareTo(java.math.BigDecimal.valueOf(0.01)) <= 0,
-                HttpStatus.BAD_REQUEST, "贡献值总和必须为100%");
-        int version = mapper.nextSubmissionWorkloadVersion(groupId, assignmentId);
-        mapper.supersedeSubmissionWorkloads(groupId, assignmentId);
-        mapper.insertSubmissionWorkloadSet(groupId, assignmentId, version, student.id());
-        long setId = mapper.submissionWorkloadSetId(groupId, assignmentId, version);
-        for (Long partId : mapper.assignmentPartIds(assignmentId)) {
-            for (Long memberId : members) {
-                mapper.insertSubmissionWorkloadItem(setId, partId, memberId,
-                        requested.get(memberId).divide(java.math.BigDecimal.valueOf(100), 6,
-                                java.math.RoundingMode.HALF_UP));
-            }
-        }
-        auditService.record(student, "SUBMISSION_CONTRIBUTIONS_SAVED", "WORKLOAD_SET", setId,
-                Map.of("assignmentId", assignmentId, "groupId", groupId));
     }
 
     /**

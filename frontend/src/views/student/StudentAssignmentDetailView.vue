@@ -62,64 +62,67 @@
             <p v-else class="muted">教师尚未设置评价分支</p>
           </section>
 
-          <div v-if="detail.groupId && detail.groupName" id="section-workload">
-            <WorkloadAllocationPanel
-              :assignment-id="route.params.assignmentId"
-              :group-id="detail.groupId"
-              :parts="detail.parts || []"
-              :members="detail.members || []"
-              :is-leader="isLeader"
-              :read-only="workloadReadOnly"
-              :current-student-id="currentStudentId"
-              @status="onWorkloadStatus"
-              @changed="load"
-            />
-          </div>
-
           <div id="section-submit">
-            <section v-if="!reviewed && submissionOpen" class="card grouping">
+            <section v-if="!reviewed && submissionOpen && !detail.groupName" class="card grouping">
               <div class="grouping-head">
                 <div>
-                  <h2>我的小组</h2>
+                  <h2>加入小组</h2>
                 </div>
                 <span>提交截止：{{ formatDate(submissionEnd) }}</span>
               </div>
-              <template v-if="detail.groupName">
-                <div class="current-group">
-                  <strong>{{ detail.groupName }}</strong>
-                  <small>{{ detail.members?.length || 0 }} / {{ Number(detail.standardGroupSize || 1) + 1 }} 人</small>
-                </div>
-                <div class="member-list">
-                  <span v-for="member in detail.members" :key="member.studentId">
-                    {{ member.name }}（{{ member.studentNo }}）{{ member.role === 'LEADER' ? ' · 组长' : '' }}
-                  </span>
-                </div>
-                <p v-if="graded" class="muted">教师已批改，本组成员已锁定。</p>
-                <button v-else class="danger-button" type="button" :disabled="groupOperating" @click="leaveGroup">退出当前小组</button>
-              </template>
-              <template v-else>
-                <div class="group-actions">
-                  <button class="primary-button" type="button" :disabled="groupOperating" @click="createGroup">创建小组</button>
-                  <span>或加入已有小组</span>
-                </div>
-                <div v-if="groups.length" class="available-groups">
-                  <article v-for="group in groups" :key="group.id">
-                    <div>
-                      <strong>{{ group.name }}</strong>
-                      <small>{{ group.memberCount }} / {{ group.maxMembers }} 人</small>
-                    </div>
-                    <button
-                      type="button"
-                      :disabled="groupOperating || group.gradingLocked || Number(group.memberCount) >= Number(group.maxMembers)"
-                      @click="joinGroup(group.groupNo)"
-                    >
-                      {{ group.gradingLocked ? '已锁定' : Number(group.memberCount) >= Number(group.maxMembers) ? '已满' : '加入' }}
-                    </button>
-                  </article>
-                </div>
-                <el-empty v-else description="暂无可加入的小组，可创建新小组" />
-              </template>
+              <div class="group-actions">
+                <button class="primary-button" type="button" :disabled="groupOperating" @click="createGroup">创建小组</button>
+                <span>或加入已有小组</span>
+              </div>
+              <div v-if="groups.length" class="group-search">
+                <input
+                  v-model.trim="groupKeyword"
+                  type="search"
+                  inputmode="numeric"
+                  aria-label="按组号搜索小组"
+                  placeholder="输入组号快速查找，如 10"
+                />
+                <button v-if="groupKeyword" type="button" @click="groupKeyword = ''">清空</button>
+              </div>
+              <p v-if="groups.length && groupKeyword" class="group-search-hint">
+                找到 {{ visibleGroups.length }} / {{ groups.length }} 个小组<span v-if="exactGroupNo != null">，第 {{ exactGroupNo }} 组已排在前面</span>
+              </p>
+              <div v-if="visibleGroups.length" class="available-groups">
+                <article
+                  v-for="group in visibleGroups"
+                  :key="group.id"
+                  :class="{ exact: exactGroupNo != null && groupNumber(group) === exactGroupNo }"
+                >
+                  <div>
+                    <strong>{{ group.name }}<span v-if="group.leaderName" class="group-leader"> | {{ group.leaderName }}</span></strong>
+                    <small>{{ group.memberCount }} / {{ group.maxMembers }} 人</small>
+                  </div>
+                  <button
+                    type="button"
+                    :disabled="groupOperating || group.gradingLocked || Number(group.memberCount) >= Number(group.maxMembers)"
+                    @click="joinGroup(group.groupNo)"
+                  >
+                    {{ group.gradingLocked ? '已锁定' : Number(group.memberCount) >= Number(group.maxMembers) ? '已满' : '加入' }}
+                  </button>
+                </article>
+              </div>
+              <p v-else-if="groups.length" class="muted">没有符合「{{ groupKeyword }}」的小组，换个组号试试</p>
+              <el-empty v-else description="暂无可加入的小组，可创建新小组" />
             </section>
+
+            <div v-if="detail.groupId && detail.groupName" id="section-workload">
+              <WorkloadAllocationPanel
+                :assignment-id="route.params.assignmentId"
+                :group-id="detail.groupId"
+                :parts="detail.parts || []"
+                :members="detail.members || []"
+                :is-leader="isLeader"
+                :read-only="workloadReadOnly"
+                :current-student-id="currentStudentId"
+                @status="onWorkloadStatus"
+                @changed="load"
+              />
+            </div>
 
             <StudentSubmissionPanel
               v-if="!reviewed && submissionOpen && detail.groupName"
@@ -130,6 +133,7 @@
               :submission-status="detail.submissionStatus"
               :submitter-name="submitterName"
               :graded="graded"
+              :is-leader="isLeader"
               :attachments="detail.attachments"
               @submitted="load"
               @changed="load"
@@ -137,7 +141,7 @@
 
             <section v-if="!reviewed && !submissionOpen" class="card locked-group">
               <h2>作业已截止</h2>
-              <p>截止时间 {{ formatDate(submissionEnd) }} 已过，小组、工作量分配与作业提交均已锁定；未全员确认的分工版本已由系统按截止时间自动锁定。</p>
+              <p>截止时间 {{ formatDate(submissionEnd) }} 已过，小组、分工与作业提交均已锁定；最后保存的分工版本即为评分依据。</p>
               <template v-if="submitted || detail.attachments?.length">
                 <p class="group-shared-hint">本组共用一份提交，附件对全组成员可见、可下载。</p>
                 <p>{{ detail.submitNote || detail.content || '本次提交暂无说明' }}</p>
@@ -178,8 +182,8 @@
                 <dd>{{ detail.groupName ? `${detail.groupName} · ${detail.members?.length || 0} 人` : '未加入小组' }}</dd>
               </div>
               <div>
-                <dt>分工确认</dt>
-                <dd :class="{ ok: workloadStatus?.locked }">{{ workloadHint }}</dd>
+                <dt>分工</dt>
+                <dd :class="{ ok: workloadStatus?.hasVersion }">{{ workloadHint }}</dd>
               </div>
               <div>
                 <dt>附件</dt>
@@ -207,7 +211,15 @@
                   <b>{{ ratioText(member.contributionRatio) }}</b>
                 </li>
               </ul>
-              <p class="muted">贡献值为已锁定分工的加权贡献 C</p>
+              <p class="muted">贡献值为最新分工版本的加权贡献 C</p>
+              <button
+                v-if="!reviewed && submissionOpen && !graded"
+                class="danger-button"
+                type="button"
+                :disabled="groupOperating"
+                @click="leaveGroup"
+              >退出当前小组</button>
+              <p v-else-if="graded" class="muted team-locked">教师已批改，本组成员已锁定。</p>
             </template>
             <p v-else class="muted">尚未加入小组</p>
           </section>
@@ -230,11 +242,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import WorkloadAllocationPanel from '@/components/student/WorkloadAllocationPanel.vue'
 import StudentSubmissionPanel from '@/components/student/StudentSubmissionPanel.vue'
+import WorkloadAllocationPanel from '@/components/student/WorkloadAllocationPanel.vue'
 import { appealScore, createStudentGroup, getAssignment, getAssignmentGroups, getScores, joinStudentGroup, leaveStudentGroup } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
 import { saveRecentProject } from '@/utils/studentRecentProject'
@@ -242,12 +254,14 @@ import { attachmentDisplayName, downloadAuthenticatedFile } from '@/utils/downlo
 import { readStoredUser } from '@/utils/session'
 import { groupSubmitterName, isGroupSubmissionReturned, isGroupSubmitted } from '@/utils/submission'
 import { groupSubmissionStatus, isSubmissionOpen, workloadChecklistHint } from '@/utils/assignmentWindow'
+import { filterAvailableGroups, groupNumber, isNumericGroupKeyword } from '@/utils/groupSearch'
 
 const route = useRoute()
 const router = useRouter()
 const detail = ref(null)
 const scores = ref([])
 const groups = ref([])
+const groupKeyword = ref('')
 const groupOperating = ref(false)
 const errorMessage = ref('')
 const appealVisible = ref(false)
@@ -266,7 +280,7 @@ const graded = computed(() => reviewed.value || detail.value?.teacherScore != nu
   || detail.value?.submissionStatus === 'GRADED')
 const isLeader = computed(() => detail.value?.memberRole === 'LEADER')
 const submissionEnd = computed(() => detail.value?.deadline ? new Date(detail.value.deadline) : null)
-// No formation phase: grouping, workload allocation and submission share one window.
+// No formation phase: grouping, contribution and submission share one window.
 const submissionOpen = computed(() => isSubmissionOpen(detail.value, now.value))
 const currentScore = computed(() => scores.value.find((item) => Number(item.assignmentId) === Number(route.params.assignmentId)))
 const submissionState = computed(() => groupSubmissionStatus({
@@ -294,18 +308,28 @@ const countdownText = computed(() => {
 })
 const countdownTitle = computed(() => submissionOpen.value ? '距离提交截止' : '作业提交已截止')
 const countdownDescription = computed(() => submissionOpen.value
-  ? `请在 ${formatDate(submissionEnd.value)} 前完成组队、分工与提交`
+  ? `请在 ${formatDate(submissionEnd.value)} 前完成组队、分工填写与作业提交`
   : `截止时间：${formatDate(submissionEnd.value)}，小组、分工与提交均已锁定`)
 const deadlineBannerClass = computed(() => submissionOpen.value ? 'deadline-banner--submission' : 'deadline-banner--closed')
 
+// Workload allocation is its own step: the leader saves it independently of the submission.
+// No member confirmation - the newest saved version is what scoring uses.
 const workloadHint = computed(() => detail.value?.groupName
   ? workloadChecklistHint(workloadStatus.value)
   : '尚未加入小组')
+const onWorkloadStatus = (status) => { workloadStatus.value = status }
+
+// Students usually remember a group by its number, not its full name. A numeric keyword
+// matches the group number by prefix ("1" also finds 第10组) and puts the exact hit first.
+const visibleGroups = computed(() => filterAvailableGroups(groups.value, groupKeyword.value))
+const exactGroupNo = computed(() => isNumericGroupKeyword(groupKeyword.value)
+  ? Number(groupKeyword.value)
+  : null)
 
 const steps = computed(() => [
   { key: 'brief', index: '1', label: '作业要求', hint: `${detail.value?.parts?.length || 0} 个评价分支`, target: 'section-brief' },
   { key: 'workload', index: '2', label: '小组分工', hint: workloadHint.value, target: 'section-workload' },
-  { key: 'upload', index: '3', label: '上传附件', hint: `${detail.value?.attachments?.length || 0} 个附件`, target: 'section-submit' },
+  { key: 'upload', index: '3', label: '作业内容', hint: `${detail.value?.attachments?.length || 0} 个附件`, target: 'section-submit' },
   { key: 'submit', index: '4', label: '确认提交', hint: statusText.value, target: 'section-submit' }
 ])
 
@@ -319,7 +343,6 @@ const goTo = (step) => {
   activeStep.value = step.key
   document.getElementById(step.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
-const onWorkloadStatus = (status) => { workloadStatus.value = status }
 const download = async (file, index) => {
   try { await downloadAuthenticatedFile(file, index) } catch (error) { ElMessage.error(getErrorMessage(error, '文件下载失败')) }
 }
@@ -343,10 +366,15 @@ const load = async () => {
   groups.value = groupRows
 }
 
+// Switching assignments reuses this component, so a stale numeric query must not
+// hide the new assignment's groups.
+watch(() => route.params.assignmentId, () => { groupKeyword.value = '' })
+
 const runGroupAction = async (action, successMessage) => {
   groupOperating.value = true
   try {
     await action()
+    groupKeyword.value = ''
     ElMessage.success(successMessage)
     await load()
   } catch (error) {
@@ -696,7 +724,6 @@ onBeforeUnmount(() => {
 .team li b { color: #4575d2; font-size: 12px; font-weight: 500; }
 
 .grouping-head,
-.current-group,
 .available-groups article {
   display: flex;
   align-items: center;
@@ -708,20 +735,32 @@ onBeforeUnmount(() => {
 .grouping-head h2 { margin-bottom: 5px; }
 .grouping-head p,
 .grouping-head > span,
-.current-group small,
 .available-groups small { margin: 0; color: #8795a7; font-size: 11px; }
-.current-group { padding: 13px 14px; border-radius: 9px; color: #426fc9; background: #edf3ff; }
-.member-list { display: grid; gap: 7px; margin: 12px 0; }
-.member-list span { padding: 9px 11px; border-radius: 7px; color: #60738c; background: #f7f9fc; font-size: 12px; }
 .group-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; color: #98a4b3; font-size: 11px; }
+.group-search { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.group-search input {
+  flex: 1; min-width: 0; box-sizing: border-box; padding: 9px 12px;
+  border: 1px solid #e4ebf4; border-radius: 8px; background: #fff;
+  color: #334155; font-size: 12px; outline: none;
+}
+.group-search input:focus { border-color: #9db7eb; box-shadow: 0 0 0 2px #edf3ff; }
+.group-search button {
+  padding: 9px 12px; border: 1px solid #e4ebf4; border-radius: 8px;
+  background: #fff; color: #8795a7; font-size: 12px; cursor: pointer;
+}
+.group-search-hint { margin: 0 0 10px; color: #8795a7; font-size: 11px; }
 .primary-button,
 .danger-button,
 .available-groups button { padding: 8px 14px; border-radius: 7px; font-size: 12px; cursor: pointer; }
 .primary-button { border: 0; color: #fff; background: #527de0; }
 .danger-button { width: 100%; border: 1px solid #e3b7b3; color: #b64f47; background: #fff; }
+.team .danger-button { margin-top: 12px; }
+.team-locked { margin-top: 10px; }
 .available-groups { display: grid; gap: 8px; }
 .available-groups article { padding: 11px 12px; border: 1px solid #e4ebf4; border-radius: 8px; }
+.available-groups article.exact { border-color: #9db7eb; background: #f4f8ff; }
 .available-groups article div { display: grid; gap: 3px; }
+.available-groups .group-leader { color: #8795a7; font-weight: 400; }
 .available-groups button { border: 1px solid #9db7eb; color: #5279d2; background: #fff; }
 .available-groups button:disabled,
 .primary-button:disabled,

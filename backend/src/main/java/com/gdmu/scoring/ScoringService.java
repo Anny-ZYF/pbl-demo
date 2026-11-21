@@ -110,17 +110,17 @@ public class ScoringService {
                                 : json(Map.of("text", member.evidence())));
             }
         }
-        mapper.insertConfirmations(setId, groupId);
-        auditService.record(actor, "WORKLOAD_SUBMITTED_FOR_CONFIRMATION", "WORKLOAD_SET", setId,
+        // No member confirmation any more: an allocation version is locked as soon as it is saved.
+        auditService.record(actor, "WORKLOAD_LOCKED", "WORKLOAD_SET", setId,
                 Map.of("assignmentId", assignmentId, "groupId", groupId, "version", version));
-        return Map.of("id", setId, "version", version, "status", "PENDING_CONFIRMATION");
+        return Map.of("id", setId, "version", version, "status", "LOCKED");
     }
 
     @Transactional
     public Map<String, Object> studentWorkload(UserPrincipal student, long assignmentId) {
         autoLockExpired(assignmentId);
         Map<String, Object> summary = mapper.studentWorkload(assignmentId, student.id());
-        if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前没有待确认的工作量分配");
+        if (summary == null) throw new BusinessException(HttpStatus.NOT_FOUND, "当前小组尚无分工方案");
         long setId = ((Number) summary.get("id")).longValue();
         Map<String, Object> response = new LinkedHashMap<>(summary);
         response.put("items", mapper.workloadItems(setId));
@@ -226,15 +226,10 @@ public class ScoringService {
         autoLockExpired(context.assignmentId());
         Long workloadSetId = mapper.lockedWorkloadSet(context.assignmentId(), context.groupId());
         if (workloadSetId == null) {
-            Long latestSetId = mapper.latestWorkloadSetId(context.assignmentId(), context.groupId());
-            List<String> pending = latestSetId == null ? List.of()
-                    : pendingMembers(mapper.workloadConfirmations(latestSetId));
-            String detail = latestSetId == null
-                    ? "（该小组尚未填写分工，截止后没有可自动锁定的版本，请教师补录后再评分）"
-                    : pending.isEmpty() ? "（尚无全员确认的分工版本）"
-                    : "（仍未确认：" + String.join("、", pending) + "）";
+            // There is no confirmation step any more: a saved version is locked immediately, so a
+            // missing LOCKED version simply means the group never saved a workload allocation.
             throw new BusinessException(HttpStatus.CONFLICT,
-                    "工作量分配尚未得到全员确认并锁定" + detail);
+                    "该小组尚未保存分工版本，请组长或教师填写分工后再评分");
         }
         List<PartRow> parts = mapper.parts(context.assignmentId());
         List<AllocationRow> allocationRows = mapper.allocations(workloadSetId);

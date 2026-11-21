@@ -511,7 +511,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 教师查询工作量返回最新版本摘要 `id/versionNo/status/submittedAt/lockedAt`，以及 `items`（`assignmentPartId/partName/studentId/studentName/share/evidence`）和 `confirmations`（`studentId/studentName/status/comment/confirmedAt`）。查询同样校验作业和团队属于当前教师；尚无版本时返回 404。
 
-发起评分前置条件：已录入团队分、有可用规则、存在全员确认后锁定的工作量版本。相同输入哈希和模型版本重复运行返回 409。
+发起评分前置条件：已录入团队分、有可用规则、存在已锁定的工作量版本（组长保存或教师补录）。相同输入哈希和模型版本重复运行返回 409。
 
 运行详情字段：
 
@@ -597,9 +597,11 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 作业项：`id`、`title`、`description`、`deadline`、`status`、`totalScore`、`standardGroupSize`、`teamFormation`、`submitted`、`scorePublished`。只返回学生有效选课中已发布/结束态作业。`teamFormation` 为兼容旧客户端保留，**恒为 `false`**：系统已取消「发布后 2 天组队期」，不再有独立的组队阶段。
 
-**统一窗口（发布 → 截止）**：作业发布后到 `deadline` 之前，学生随时可以创建/加入/退出小组、填写并确认工作量分配、登记附件、提交作业；加入小组后即可直接填写工作量与提交，无需等待任何组队期。到达 `deadline` 后学生端所有写操作（建组、加入、退出、分工提交与确认、附件登记与删除、作业提交）统一返回 409。截止时尚未全员确认的工作量版本由后端自动锁定（见 6.2）；教师端保留补录分工的入口，否则从未填写分工的小组将永远无法评分，教师补录的新版本同样会进入截止自动锁定。前端不应再用 `publishedAt + 2 天` 自行推算组队期。
+**统一窗口（发布 → 截止）**：作业发布后到 `deadline` 之前，学生随时可以创建/加入/退出小组、填写分工、登记附件、提交作业；加入小组后即可直接填写并提交，无需等待任何组队期。到达 `deadline` 后学生端所有写操作（建组、加入、退出、分工保存、附件登记与删除、作业提交）统一返回 409。分工与作业提交是两个独立动作：组长在 6.2 的接口单独保存分工矩阵，保存即 `LOCKED`，不需要组员确认，也不随作业提交一起发送；教师端保留补录分工的入口，否则从未填写过分工的小组将无法评分。前端不应再用 `publishedAt + 2 天` 自行推算组队期。
 
 教师批改后，该小组的成员和学生分工填写入口锁定。批改前变更成员会将原分工标记为已被替代，组长可按新名单提交分工，已保存的历史版本保留。小组列表使用 `gradingLocked` 标记是否已因批改锁定。
+
+**可加入小组列表**（`GET /student/assignments/{assignmentId}/groups`）每项返回 `id`、`name`、`groupNo`、`maxMembers`、`memberCount`、`gradingLocked`、`leaderName`。`groupNo` 由「第N组」解析得到，用于按数字搜索；`leaderName` 取 `group_table.leader_student_id` 对应的 `student_users.name`，该字段缺失时回退到 `group_member` 中 `role='LEADER'` 的有效成员，都没有则为 `null`。学生端卡片显示为「第1组 | 演示学生01」，组长转让或退出后随下一次请求更新。
 
 **提交是小组级资源，不是成员级资源**：`submission` 由唯一键 `(assignment_id, group_id, is_latest)` 约束，一个小组同一作业只有一条当前提交。任意 `ACTIVE` 成员提交后，该组所有成员的作业列表与作业详情都会读到同一个 `submitted=true`、`content`、`submitNote`、`attachments` 和 `submissionStatus`（`content` 与 `submitNote` 是同一段「提交说明」的两个兼容字段，见下文）；`submitterId` 只记录是谁点的提交，不决定可见性。列表的 `submitted` 与 `scorePublished` 都通过 `group_member` 关联本组，并排除 `DRAFT`（只上传了草稿附件不算已提交）；`scorePublished` 只认本组 `scoring_run`，不会因其他小组发布成绩而把全作业学生变成"已批阅"。
 
@@ -628,9 +630,9 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 **草稿附件（组内协作阶段，推荐路径）**：学生上传文件后应立即调用 `POST /student/assignments/{assignmentId}/draft-attachments`，请求体为 `{"storageKey":"...","originalName":"报告.pdf","fileSize":120045}`。服务端校验 `storageKey` 必须由当前学生账号上传（`年/月/student/{id}/{uuid}.{ext}`）且该学生属于该作业有效团队的 `ACTIVE` 成员，然后确保存在一条 `status='DRAFT'` 的最新提交并把附件写入 `submission_attachment`。**此时附件全组成员都能列出和下载，教师侧的提交列表、附件列表与下载权限都排除 `DRAFT`。** 点击「提交作业」时 `POST .../submission` 会把同一条提交从 `DRAFT` 改为 `SUBMITTED`，附件无需重传即转为教师可见，同时全组成员的 `submitted` 一起变为 `true`；草稿附件计入「提交说明或附件至少一项」校验。作业详情的 `submissionStatus='DRAFT'` 不代表已提交。若团队已正式提交过，再登记附件会直接挂在该提交上并立即对教师可见。`DELETE .../attachments/{attachmentId}` 允许本组 `ACTIVE` 成员在**提交窗口内（未过 `deadline`、未批阅、成绩未发布）**删除本组当前最新提交（`DRAFT`/`SUBMITTED`/`RETURNED`）的任意附件，包含「重新提交」编辑态下先前已提交的附件；服务端先用与作业详情一致的 `studentGroup` 解析 `groupId`，再按 `sa.id + assignment_id + group_id + is_latest=1` 定位，避免删到别组附件。进入 `GRADED`、成绩已发布或超过 `deadline` 后附件冻结（删除返回 404／409）。删除后全组成员重新拉取详情即同步；上传者本人仍可通过 `GET /files?key=...` 读取自己账号目录下的文件。
 
-**提交说明就是提交内容，界面上没有单独的「正文」字段**：学生端只有一个「提交说明」输入框，前端把它同时写入 `content` 与 `note`；后端在 `content` 为空时用 `note` 兜底（兼容只传 `note` 的旧客户端），因此 `submission.content` 与 `submission.submit_note` 保存同一段文本，教师端与作业详情读到的都是这段说明。只填写提交说明、一个附件都不传也能提交成功；反之只有附件没有说明同样可以提交。`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。「提交说明或附件至少一项非空」，「已有附件」按当前最新提交上的附件数统计、不再限定 `DRAFT`，因此附件型小组重新提交、或删掉部分附件后重新提交都不需要重传全部文件；两者都为空时返回 400「请填写提交说明或上传附件」。学生必须属于该作业有效团队；作业必须已发布且未过截止时间（不再校验「组队期已结束」）。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
+**提交说明就是提交内容，界面上没有单独的「正文」字段**：组长在「提交说明」里填写内容，前端把它同时写入 `content` 与 `note`。`submission.content` 与 `submission.submit_note` 保存同一段文本，教师端与作业详情读到的都是这段说明。**提交说明与附件至少一项非空**，否则返回 400「请填写提交说明或上传附件」；已有附件按当前最新提交统计，附件型小组重新提交无需重传。`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。学生必须属于该作业有效团队且为 `LEADER`，其他成员提交返回 403「只有小组组长可以编辑并提交作业」；作业必须已发布且未过截止时间。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
 
-提交作业不再接收或写入工作量份额。旧版兼容字段 `contributionScores`（每名成员一个总贡献百分比）仅在该团队尚不存在 `LOCKED` 或 `PENDING_CONFIRMATION` 工作量版本时才会被处理，前端不应再传；按评价分支的 `Q` 份额一律通过 6.2 的工作量接口提交。这样提交作业不会覆盖矩阵明细，发起评分仍要求存在全员确认后锁定的工作量版本。
+**分工不属于提交请求**：`StudentSubmissionRequest.contributionScores` 仅为旧客户端兼容保留，服务端已忽略，提交作业不会写入或覆盖工作量版本。分工必须通过 6.2 的 `PUT /student/assignments/{assignmentId}/groups/{groupId}/workload` 单独保存，由组长按评价分支填写矩阵，保存即 `LOCKED`；组员无需确认，也没有异议接口。需要按成员一个总百分比分配时，前端自行折算为各分支相同份额，后端的校验仍是「每个分支成员份额之和为 1」。
 
 ### 6.2 评分接口 `StudentScoringController`
 
@@ -638,12 +640,16 @@ role,username,displayName,department,major,class,grade,initialPassword
 |---|---|---|---|
 | `GET /student/assignments/{assignmentId}/workload` | 无 | 工作量版本与明细 | 200 |
 | `PUT /student/assignments/{assignmentId}/groups/{groupId}/workload` | `WorkloadAllocationRequest` | `{id,version,status}` | 200 |
-| `PUT /student/workload-sets/{setId}/confirmation` | `{status,comment?}` | `null` | 200 |
+| `PUT /student/workload-sets/{setId}/confirmation` | `{status,comment?}` | `null` | 200（历史 PENDING 版本兼容，新版不再产生） |
 | `GET /student/scores` | 无 | 已发布成绩数组 | 200 |
 | `GET /student/appeals` | 无 | 本人申诉数组 | 200 |
 | `POST /student/scores/{scoreResultId}/appeals` | `AppealCreateRequest` | `null` | 200 |
 
-团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和。工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`myConfirmation`、`comment`、`autoLocked`，以及 `items` 和 `objections` 数组。`autoLocked=true` 表示该版本不是全员确认锁定，而是在 `assignment.deadline` 到达时由系统按截止时间自动锁定（对比 `locked_at >= deadline` 得出）；此时仍未确认的 `workload_confirmation` 保持 `PENDING`，但版本已是 `LOCKED`、不可再编辑或确认，评分会采用该版本。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。`objections` 为当前版本的异议列表，字段 `studentId`、`studentName`、`comment`、`confirmedAt`；非空表示该版本已退回组长修改，不能再被确认。
+团队组长可用与教师相同的 `WorkloadAllocationRequest` 提交新方案；服务端校验组长身份、全部分支、全部成员和每分支份额和，保存成功后直接生成 `LOCKED` 版本（写入 `locked_at`），并把同组同作业的旧版本（含上一个 `LOCKED`）置为 `SUPERSEDED`。每组同一时刻只有一个非 `SUPERSEDED` 版本，评分只读取最新的 `LOCKED` 版本。截止后学生保存返回 409；小组已批改或成绩已发布后同样返回 409，教师端补录仍可用。
+
+工作量响应：`id`、`versionNo`、`status`、`submittedAt`、`lockedAt`、`autoLocked`，以及 `items` 数组。`myConfirmation`、`comment`、`objections` 字段仅为历史 `PENDING_CONFIRMATION` 数据保留，新版恒为 `null` 或空数组，前端不应再展示确认/异议入口。`autoLocked=true` 表示该版本是在 `assignment.deadline` 到达时被系统自动锁定（`locked_at >= deadline`），而不是保存时锁定；正常保存的版本 `locked_at` 早于截止时间，学生端显示为「已保存」。明细项为 `assignmentPartId`、`partName`、`studentId`、`studentName`、`share`、`evidence`。
+
+`PUT /student/workload-sets/{setId}/confirmation` 仅为兼容历史 `PENDING_CONFIRMATION` 版本保留；新版版本保存即 `LOCKED`，调用返回 409，学生端不再提供确认/异议入口。
 
 确认请求：
 
@@ -651,7 +657,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 {"status":"OBJECTED","comment":"第二分支的份额与实际记录不一致"}
 ```
 
-状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。只有工作量版本仍为 `PENDING_CONFIRMATION` 且作业未过截止时间时可操作；全部成员确认后服务端自动锁定，作业截止时未确认的版本也会自动锁定，两种情况之后所有提交/确认接口返回 409。任意成员提交 `OBJECTED` 后该版本暂停确认，其余成员再提交 `CONFIRMED` 返回 409；组长据异议修改份额并重新提交方案时，旧的 `PENDING_CONFIRMATION` 版本被置为 `SUPERSEDED`，新版本重新进入全员确认，评分只采用 `LOCKED` 版本。
+状态只能为 `CONFIRMED` 或 `OBJECTED`；异议时 `comment` 必填，最长 1000。仅用于历史 `PENDING_CONFIRMATION` 版本（含截止自动锁定前的存量数据），新版保存即 `LOCKED`，因此该接口对新版本一律返回 409。学生端不再调用此接口。
 
 成绩数组只包含 `PUBLISHED` 项，字段：`scoreResultId`、`studentId`、`assignmentId`、`assignmentTitle`、`courseId`、`courseName`、`groupName`、`groupScore`、`contribution`、`ruleScore`、`modelScore`、`finalScore`、`explanation`、`scoringSnapshot`、`reviewReason`、`publishedAt`、`runNo`、`modelVersion`、`ruleVersion`。`finalScore` 优先取最新 `score_revision`，原始已发布 `score_result` 不被覆盖。
 

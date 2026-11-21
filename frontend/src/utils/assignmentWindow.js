@@ -36,24 +36,13 @@ export const groupSubmissionStatus = ({
   return { text: '已截止', tone: 'closed' }
 }
 
+/**
+ * Workload allocation is saved (and locked) by the leader alone; there is no member
+ * confirmation step. The checklist only needs to say whether a version exists yet.
+ */
 export const workloadChecklistHint = (status) => {
   if (!status) return '加载中'
-  if (status.locked) {
-    return isAutoLocked(status.autoLocked)
-      ? '截止自动锁定（含未确认成员）'
-      : '已全员确认并锁定'
-  }
-  if (status.objected) {
-    return status.myConfirmation === 'OBJECTED' ? '已提异议，待组长重提' : '有成员异议，待组长重提'
-  }
   if (!status.hasVersion) return '尚未填写分工'
-  if (status.myConfirmation === 'CONFIRMED') {
-    const pending = status.pendingMembers || []
-    return pending.length ? `我已确认，等待 ${pending.join('、')}` : '我已确认，等待其他成员'
-  }
-  if (status.myConfirmation === 'OBJECTED') return '我已提出异议'
-  const pending = status.pendingMembers || []
-  return pending.length
-    ? `等待我确认（共 ${pending.length} 人待确认：${pending.join('、')}）`
-    : '等待我确认'
+  if (isAutoLocked(status.autoLocked)) return '截止自动锁定'
+  return `已保存（第 ${status.versionNo ?? '—'} 版）`
 }
