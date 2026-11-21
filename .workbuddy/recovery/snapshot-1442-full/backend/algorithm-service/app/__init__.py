@@ -1,2 +1,0 @@
-"""MCQS scoring service."""
-

@@ -1,9 +1,0 @@
-target
-algorithm-service
-database
-.env
-.env.*
-!.env.example
-**/application-local.yml
-data
-*.log

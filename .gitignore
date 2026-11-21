@@ -33,6 +33,7 @@ npm-debug.log*
 /.agents/
 /.kiro/
 /.trae/
+/.workbuddy/
 /.playwright-mcp/
 .mcp.json
 /.mcp/
