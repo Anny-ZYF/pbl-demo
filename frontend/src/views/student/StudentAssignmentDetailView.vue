@@ -85,11 +85,11 @@
                 <button v-if="groupKeyword" type="button" @click="groupKeyword = ''">清空</button>
               </div>
               <p v-if="groups.length && groupKeyword" class="group-search-hint">
-                找到 {{ visibleGroups.length }} / {{ groups.length }} 个小组<span v-if="exactGroupNo != null">，第 {{ exactGroupNo }} 组已排在前面</span>
+                找到 {{ matchedGroups.length }} / {{ groups.length }} 个小组<span v-if="exactGroupNo != null">，第 {{ exactGroupNo }} 组已排在前面</span>
               </p>
-              <div v-if="visibleGroups.length" class="available-groups">
+              <div v-if="pageGroups.length" class="available-groups">
                 <article
-                  v-for="group in visibleGroups"
+                  v-for="group in pageGroups"
                   :key="group.id"
                   :class="{ exact: exactGroupNo != null && groupNumber(group) === exactGroupNo }"
                 >
@@ -106,8 +106,13 @@
                   </button>
                 </article>
               </div>
-              <p v-else-if="groups.length" class="muted">没有符合「{{ groupKeyword }}」的小组，换个组号试试</p>
-              <el-empty v-else description="暂无可加入的小组，可创建新小组" />
+              <div v-if="pageGroups.length && pageCount > 1" class="group-pager">
+                <button type="button" :disabled="page === 1" @click="page -= 1">上一页</button>
+                <span>{{ (page - 1) * GROUP_PAGE_SIZE + 1 }}–{{ Math.min(page * GROUP_PAGE_SIZE, matchedGroups.length) }} / 共 {{ matchedGroups.length }} 个小组</span>
+                <button type="button" :disabled="page === pageCount" @click="page += 1">下一页</button>
+              </div>
+              <p v-if="!pageGroups.length && groups.length" class="muted">没有符合「{{ groupKeyword }}」的小组，换个组号试试</p>
+              <el-empty v-if="!groups.length" description="暂无可加入的小组，可创建新小组" />
             </section>
 
             <div v-if="detail.groupId && detail.groupName" id="section-workload">
@@ -134,16 +139,16 @@
               :submitter-name="submitterName"
               :graded="graded"
               :is-leader="isLeader"
+              :workload-ready="workloadReady"
               :attachments="detail.attachments"
               @submitted="load"
-              @changed="load"
             />
 
             <section v-if="!reviewed && !submissionOpen" class="card locked-group">
               <h2>作业已截止</h2>
               <p>截止时间 {{ formatDate(submissionEnd) }} 已过，小组、分工与作业提交均已锁定；最后保存的分工版本即为评分依据。</p>
               <template v-if="submitted || detail.attachments?.length">
-                <p class="group-shared-hint">本组共用一份提交，附件对全组成员可见、可下载。</p>
+                <p class="group-shared-hint">本组共用一份提交；历史附件仍可查看和下载。</p>
                 <p>{{ detail.submitNote || detail.content || '本次提交暂无说明' }}</p>
                 <button v-for="(file, index) in detail.attachments || []" :key="`closed-${file.id || file.storageKey}`" type="button" @click="download(file, index)">
                   <span>{{ attachmentDisplayName(file, index) }}</span><small>下载</small>
@@ -154,7 +159,7 @@
             <section v-if="reviewed" class="card readonly">
               <h2>已提交内容</h2>
               <b>✓ 成绩已发布</b>
-              <p class="group-shared-hint">本组共用一份提交，附件对全组成员可见、可下载。</p>
+              <p class="group-shared-hint">本组共用一份提交；历史附件仍可查看和下载。</p>
               <p>{{ detail.submitNote || detail.content || '本次提交暂无说明' }}</p>
               <button v-for="(file, index) in detail.attachments || []" :key="file.id || file.storageKey" type="button" @click="download(file, index)">
                 <span>{{ attachmentDisplayName(file, index) }}</span><small>下载</small>
@@ -184,10 +189,6 @@
               <div>
                 <dt>分工</dt>
                 <dd :class="{ ok: workloadStatus?.hasVersion }">{{ workloadHint }}</dd>
-              </div>
-              <div>
-                <dt>附件</dt>
-                <dd>{{ detail.attachments?.length || 0 }} 个</dd>
               </div>
               <div>
                 <dt>提交状态</dt>
@@ -303,8 +304,14 @@ const countdownMilliseconds = computed(() => Math.max(0, (submissionEnd.value?.g
 const countdownText = computed(() => {
   const totalMinutes = Math.ceil(countdownMilliseconds.value / 60000)
   if (totalMinutes <= 0) return '提交已截止'
-  const hours = Math.floor(totalMinutes / 60)
-  return `${hours} 小时 ${totalMinutes % 60} 分钟`
+  const days = Math.floor(totalMinutes / 1440)
+  const hours = Math.floor((totalMinutes % 1440) / 60)
+  const minutes = totalMinutes % 60
+  const parts = []
+  if (days > 0) parts.push(`${days} 天`)
+  if (days > 0 || hours > 0) parts.push(`${hours} 小时`)
+  parts.push(`${minutes} 分钟`)
+  return parts.join(' ')
 })
 const countdownTitle = computed(() => submissionOpen.value ? '距离提交截止' : '作业提交已截止')
 const countdownDescription = computed(() => submissionOpen.value
@@ -318,10 +325,24 @@ const workloadHint = computed(() => detail.value?.groupName
   ? workloadChecklistHint(workloadStatus.value)
   : '尚未加入小组')
 const onWorkloadStatus = (status) => { workloadStatus.value = status }
+// Submitting requires a saved (LOCKED) contribution matrix. While the panel is still loading the
+// status is unknown, so the hint stays quiet instead of flashing a false alarm.
+const workloadReady = computed(() => !workloadStatus.value || workloadStatus.value.locked === true)
 
 // Students usually remember a group by its number, not its full name. A numeric keyword
 // matches the group number by prefix ("1" also finds 第10组) and puts the exact hit first.
-const visibleGroups = computed(() => filterAvailableGroups(groups.value, groupKeyword.value))
+// The join list pages inside the card (5 rows per page) instead of capping the result set,
+// so every group stays reachable while the card height stays predictable.
+const GROUP_PAGE_SIZE = 5
+const page = ref(1)
+const matchedGroups = computed(() => filterAvailableGroups(groups.value, groupKeyword.value))
+const pageCount = computed(() => Math.max(1, Math.ceil(matchedGroups.value.length / GROUP_PAGE_SIZE)))
+const pageGroups = computed(() => matchedGroups.value.slice((page.value - 1) * GROUP_PAGE_SIZE, page.value * GROUP_PAGE_SIZE))
+// A narrower search or a refreshed list can leave the current page past the end.
+watch([groupKeyword, pageCount], () => {
+  if (page.value > pageCount.value) page.value = pageCount.value
+})
+watch(groupKeyword, () => { page.value = 1 })
 const exactGroupNo = computed(() => isNumericGroupKeyword(groupKeyword.value)
   ? Number(groupKeyword.value)
   : null)
@@ -329,7 +350,7 @@ const exactGroupNo = computed(() => isNumericGroupKeyword(groupKeyword.value)
 const steps = computed(() => [
   { key: 'brief', index: '1', label: '作业要求', hint: `${detail.value?.parts?.length || 0} 个评价分支`, target: 'section-brief' },
   { key: 'workload', index: '2', label: '小组分工', hint: workloadHint.value, target: 'section-workload' },
-  { key: 'upload', index: '3', label: '作业内容', hint: `${detail.value?.attachments?.length || 0} 个附件`, target: 'section-submit' },
+  { key: 'submit-content', index: '3', label: '作业内容', hint: detail.value?.submitNote || detail.value?.content ? '已填写内容' : '仅组长可编辑', target: 'section-submit' },
   { key: 'submit', index: '4', label: '确认提交', hint: statusText.value, target: 'section-submit' }
 ])
 
@@ -363,11 +384,9 @@ const load = async () => {
       : Promise.resolve([])
   ])
   scores.value = scoreRows
-  groups.value = groupRows
+  groups.value = [...groupRows].sort((a, b) => (groupNumber(a) ?? Number.MAX_SAFE_INTEGER) - (groupNumber(b) ?? Number.MAX_SAFE_INTEGER))
 }
 
-// Switching assignments reuses this component, so a stale numeric query must not
-// hide the new assignment's groups.
 watch(() => route.params.assignmentId, () => { groupKeyword.value = '' })
 
 const runGroupAction = async (action, successMessage) => {
@@ -396,8 +415,6 @@ const submitAppeal = async () => {
   }
 }
 
-// The submission is shared by the whole group: refresh when the tab regains focus
-// so another member's submit is reflected without a manual page reload.
 const refreshOnFocus = () => { load().catch(() => {}) }
 onMounted(() => {
   countdownTimer = window.setInterval(() => { now.value = Date.now() }, 1000)
@@ -572,9 +589,7 @@ onBeforeUnmount(() => {
 }
 
 .side {
-  position: sticky;
-  top: 18px;
-  grid-auto-rows: 1fr;
+  align-content: start;
 }
 
 .card {
@@ -662,9 +677,16 @@ onBeforeUnmount(() => {
 
 .muted { margin: 0; color: #9aa6b5; font-size: 12px; }
 
+.checklist { padding: 17px 18px; }
+
+.checklist h2 {
+  margin-bottom: 11px;
+  font-size: 14px;
+}
+
 .checklist dl {
   display: grid;
-  gap: 12px;
+  gap: 9px;
   margin: 0;
 }
 
@@ -749,6 +771,28 @@ onBeforeUnmount(() => {
   background: #fff; color: #8795a7; font-size: 12px; cursor: pointer;
 }
 .group-search-hint { margin: 0 0 10px; color: #8795a7; font-size: 11px; }
+.group-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e4ebf4;
+  color: #8795a7;
+  font-size: 11px;
+}
+.group-pager button {
+  padding: 6px 12px;
+  border: 1px solid #e4ebf4;
+  border-radius: 7px;
+  background: #fff;
+  color: #5279d2;
+  font-size: 12px;
+  cursor: pointer;
+}
+.group-pager button:disabled { color: #b8c1cd; cursor: not-allowed; background: #fbfcfe; }
+.group-pager span { flex: 1; text-align: center; }
 .primary-button,
 .danger-button,
 .available-groups button { padding: 8px 14px; border-radius: 7px; font-size: 12px; cursor: pointer; }
@@ -845,7 +889,6 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1000px) {
   .layout { grid-template-columns: 1fr; }
-  .side { position: static; }
 }
 
 @media (max-width: 700px) {

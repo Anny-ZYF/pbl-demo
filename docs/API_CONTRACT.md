@@ -507,7 +507,9 @@ role,username,displayName,department,major,class,grade,initialPassword
 }
 ```
 
-请求必须包含作业全部分支且不重复；每个分支必须包含团队全部成员且不重复；每个 `share` 为 `0..1`，每分支合计在 `1e-6` 容差内等于 1。成功创建递增版本，返回 `{id,version,status:"PENDING_CONFIRMATION"}`。
+请求必须包含作业全部分支且不重复；每个分支必须包含团队全部成员且不重复；每个 `share` 为 `0..1`（DTO 用 `@DecimalMin("0")`/`@DecimalMax("1")` 拦截负数与超过 100% 的值），每分支合计在 `1e-6` 容差内等于 1。成功创建递增版本，返回 `{id,version,status:"LOCKED"}`。
+
+**学生端填写的钳位规则（前端 `frontend/src/utils/workload.js`，仅影响 UI，不改变接口语义）**：一行（一个评价分支）总额上限 100 个百分点，先填的成员先占额度，后面的成员最多只能填「100 − 同行其他成员合计」。输入 `140` 会被钳成 `100`；A 已填 `100` 后，B/C/D 输入任何正数都变成 `0`；把 A 改小后其余成员的可填额度随之恢复。份额保留两位小数（`clampCellValue` / `cellLimit`），保存时仍按 `share = 百分比 / 100` 传给后端，因此后端拿到的永远是合法值；历史数据或成员变动后回填时也按同样规则逐格钳位，保证一行不会超过 100。
 
 教师查询工作量返回最新版本摘要 `id/versionNo/status/submittedAt/lockedAt`，以及 `items`（`assignmentPartId/partName/studentId/studentName/share/evidence`）和 `confirmations`（`studentId/studentName/status/comment/confirmedAt`）。查询同样校验作业和团队属于当前教师；尚无版本时返回 404。
 
@@ -628,11 +630,11 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 `attachments` 最多 20 项，每项必须是当前学生账号上传得到的 `storageKey`（`年/月/student/{id}/{uuid}.{ext}` 格式）。`originalName` 与 `fileSize` 直接取 `POST /files` 返回的 `originalName` 与 `size`，服务端清洗后写入 `submission_attachment`，教师端列表和下载响应头都使用这个名字。旧客户端仍可只传字符串数组 `["2026/07/student/101/uuid.pdf"]`，此时数据库只记录存储文件名，前端会回退展示为「附件 N.ext」；新实现不要再用这种形式，否则教师看到的仍是 UUID 文件名。同一 `storageKey` 重复提交时按唯一键更新文件名与大小。
 
-**草稿附件（组内协作阶段，推荐路径）**：学生上传文件后应立即调用 `POST /student/assignments/{assignmentId}/draft-attachments`，请求体为 `{"storageKey":"...","originalName":"报告.pdf","fileSize":120045}`。服务端校验 `storageKey` 必须由当前学生账号上传（`年/月/student/{id}/{uuid}.{ext}`）且该学生属于该作业有效团队的 `ACTIVE` 成员，然后确保存在一条 `status='DRAFT'` 的最新提交并把附件写入 `submission_attachment`。**此时附件全组成员都能列出和下载，教师侧的提交列表、附件列表与下载权限都排除 `DRAFT`。** 点击「提交作业」时 `POST .../submission` 会把同一条提交从 `DRAFT` 改为 `SUBMITTED`，附件无需重传即转为教师可见，同时全组成员的 `submitted` 一起变为 `true`；草稿附件计入「提交说明或附件至少一项」校验。作业详情的 `submissionStatus='DRAFT'` 不代表已提交。若团队已正式提交过，再登记附件会直接挂在该提交上并立即对教师可见。`DELETE .../attachments/{attachmentId}` 允许本组 `ACTIVE` 成员在**提交窗口内（未过 `deadline`、未批阅、成绩未发布）**删除本组当前最新提交（`DRAFT`/`SUBMITTED`/`RETURNED`）的任意附件，包含「重新提交」编辑态下先前已提交的附件；服务端先用与作业详情一致的 `studentGroup` 解析 `groupId`，再按 `sa.id + assignment_id + group_id + is_latest=1` 定位，避免删到别组附件。进入 `GRADED`、成绩已发布或超过 `deadline` 后附件冻结（删除返回 404／409）。删除后全组成员重新拉取详情即同步；上传者本人仍可通过 `GET /files?key=...` 读取自己账号目录下的文件。
+**草稿附件（组内协作阶段，推荐路径）**：**当前版本学生端已暂时移除附件上传入口**，本节接口保持可用、历史附件数据保留（学生端与教师端仍可下载），恢复上传 UI 即可重新启用。学生上传文件后应立即调用 `POST /student/assignments/{assignmentId}/draft-attachments`，请求体为 `{"storageKey":"...","originalName":"报告.pdf","fileSize":120045}`。服务端校验 `storageKey` 必须由当前学生账号上传（`年/月/student/{id}/{uuid}.{ext}`）且该学生属于该作业有效团队的 `ACTIVE` 成员，然后确保存在一条 `status='DRAFT'` 的最新提交并把附件写入 `submission_attachment`。**此时附件全组成员都能列出和下载，教师侧的提交列表、附件列表与下载权限都排除 `DRAFT`。** 点击「提交作业」时 `POST .../submission` 会把同一条提交从 `DRAFT` 改为 `SUBMITTED`，附件无需重传即转为教师可见，同时全组成员的 `submitted` 一起变为 `true`；草稿附件计入「提交说明或附件至少一项」校验。作业详情的 `submissionStatus='DRAFT'` 不代表已提交。若团队已正式提交过，再登记附件会直接挂在该提交上并立即对教师可见。`DELETE .../attachments/{attachmentId}` 允许本组 `ACTIVE` 成员在**提交窗口内（未过 `deadline`、未批阅、成绩未发布）**删除本组当前最新提交（`DRAFT`/`SUBMITTED`/`RETURNED`）的任意附件，包含「重新提交」编辑态下先前已提交的附件；服务端先用与作业详情一致的 `studentGroup` 解析 `groupId`，再按 `sa.id + assignment_id + group_id + is_latest=1` 定位，避免删到别组附件。进入 `GRADED`、成绩已发布或超过 `deadline` 后附件冻结（删除返回 404／409）。删除后全组成员重新拉取详情即同步；上传者本人仍可通过 `GET /files?key=...` 读取自己账号目录下的文件。
 
-**提交说明就是提交内容，界面上没有单独的「正文」字段**：组长在「提交说明」里填写内容，前端把它同时写入 `content` 与 `note`。`submission.content` 与 `submission.submit_note` 保存同一段文本，教师端与作业详情读到的都是这段说明。**提交说明与附件至少一项非空**，否则返回 400「请填写提交说明或上传附件」；已有附件按当前最新提交统计，附件型小组重新提交无需重传。`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。学生必须属于该作业有效团队且为 `LEADER`，其他成员提交返回 403「只有小组组长可以编辑并提交作业」；作业必须已发布且未过截止时间。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
+**提交说明就是提交内容，界面上没有单独的「正文」字段**：组长在「选题题目」里填写内容，前端把它同时写入 `content` 与 `note`。`submission.content` 与 `submission.submit_note` 保存同一段文本，教师端与作业详情读到的都是这段说明。**提交说明与附件至少一项非空**，否则返回 400「请填写提交说明或上传附件」；已有附件按当前最新提交统计，附件型小组重新提交无需重传。`content` 最长 20000，`filePath` 最长 500，`note` 最长 1000。学生必须属于该作业有效团队且为 `LEADER`，其他成员提交返回 403「只有小组组长可以编辑并提交作业」；作业必须已发布且未过截止时间。处于 `DRAFT/SUBMITTED/RETURNED` 且成绩未发布时可覆盖最新提交；进入 `GRADED` 或已发布后返回 409，避免覆盖评分依据。
 
-**分工不属于提交请求**：`StudentSubmissionRequest.contributionScores` 仅为旧客户端兼容保留，服务端已忽略，提交作业不会写入或覆盖工作量版本。分工必须通过 6.2 的 `PUT /student/assignments/{assignmentId}/groups/{groupId}/workload` 单独保存，由组长按评价分支填写矩阵，保存即 `LOCKED`；组员无需确认，也没有异议接口。需要按成员一个总百分比分配时，前端自行折算为各分支相同份额，后端的校验仍是「每个分支成员份额之和为 1」。
+**分工不属于提交请求**：`StudentSubmissionRequest.contributionScores` 仅为旧客户端兼容保留，服务端已忽略，提交作业不会写入或覆盖工作量版本。分工必须通过 6.2 的 `PUT /student/assignments/{assignmentId}/groups/{groupId}/workload` 单独保存，由组长按评价分支填写矩阵，保存即 `LOCKED`；组员无需确认，也没有异议接口。需要按成员一个总百分比分配时，前端自行折算为各分支相同份额，后端的校验仍是「每个分支成员份额之和为 1」。**提交前必须已存在本组该作业的 `LOCKED` 分工版本**：`POST /student/assignments/{assignmentId}/submission` 先校验组长身份，再校验 `workload_set` 中存在 `assignment_id + group_id + status='LOCKED'` 的记录，否则返回 400「请先在「小组分工」中填写并保存贡献度，再提交作业」；成员变动或重新保存把旧版本改成 `SUPERSEDED` 后也会命中该错误，需先重新保存分工。
 
 ### 6.2 评分接口 `StudentScoringController`
 

@@ -477,6 +477,11 @@ public class TeachingService {
         // the shared, read-only result. Workload allocation is a separate leader-only endpoint.
         require("LEADER".equals(mapper.activeGroupMemberRole(groupId, student.id())),
                 HttpStatus.FORBIDDEN, "只有小组组长可以编辑并提交作业");
+        // Contribution matrix first: the leader saves it in its own step, but a team cannot hand
+        // in the work before the allocation exists. Whatever superseded the version (member left,
+        // version replaced) leaves no LOCKED row, so the group must save again before submitting.
+        require(mapper.lockedWorkloadCount(assignmentId, groupId) > 0, HttpStatus.BAD_REQUEST,
+                "请先在「小组分工」中填写并保存贡献度，再提交作业");
         // The "submit note" IS the submission content. Older clients only send note, so fold
         // it into content; the UI sends both with the same value. A filled note alone is a
         // valid submission - attachments are optional.

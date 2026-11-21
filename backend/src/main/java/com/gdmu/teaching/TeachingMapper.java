@@ -514,6 +514,12 @@ public interface TeachingMapper {
             """)
     int supersedeGroupWorkloads(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
 
+    @Select("""
+            SELECT COUNT(*) FROM workload_set
+            WHERE assignment_id=#{assignmentId} AND group_id=#{groupId} AND status='LOCKED'
+            """)
+    int lockedWorkloadCount(@Param("assignmentId") long assignmentId, @Param("groupId") long groupId);
+
     @Select("SELECT student_id FROM group_member WHERE group_id=#{groupId} AND status='ACTIVE' ORDER BY joined_at,id LIMIT 1")
     Long nextGroupLeader(long groupId);
 

@@ -3,7 +3,7 @@
     <div class="wl-head">
       <div>
         <h2>小组与工作量分配</h2>
-        <p>按评价分支填写每位成员的工作量份额，每行合计须为 100</p>
+        <p>按评价分支填写每位成员的工作量份额，每行合计须为 100；超出剩余额度的输入会自动钳位</p>
       </div>
       <span class="wl-role">{{ roleHint }}</span>
     </div>
@@ -37,16 +37,17 @@
               </th>
               <td v-for="member in members" :key="`${row.id}-${member.studentId}`">
                 <input
-                  v-model="draft[cellKey(row.id, member.studentId)]"
+                  :value="draft[cellKey(row.id, member.studentId)]"
                   type="number"
                   min="0"
-                  max="100"
+                  :max="cellLimitFor(row.id, member.studentId)"
                   step="1"
                   inputmode="numeric"
                   :disabled="!editable"
                   :aria-label="`${row.name} - ${member.name} 工作量份额`"
-                  :class="{ 'wl-cell--mine': isMine(member) }"
+                  :class="{ 'wl-cell--mine': isMine(member), 'wl-cell--clamped': clampFlash === cellKey(row.id, member.studentId) }"
                   placeholder="—"
+                  @input="onCellInput(row.id, member.studentId, $event)"
                 >
               </td>
               <td class="wl-remain" :class="remainClass(row)">{{ remainText(row) }}</td>
@@ -85,7 +86,7 @@ import { ElMessage } from 'element-plus'
 import { getWorkload, proposeWorkload } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
 import { isAutoLocked } from '@/utils/assignmentWindow'
-import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey } from '@/utils/workload'
+import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, cellLimit, clampCellValue } from '@/utils/workload'
 
 const props = defineProps({
   assignmentId: { type: [String, Number], required: true },
@@ -111,6 +112,37 @@ const isMine = (member) => props.currentStudentId != null
 const rows = computed(() => buildRows(props.parts, props.members, draft))
 const allComplete = computed(() => allRowsComplete(rows.value, props.members.length))
 const contributions = computed(() => buildContributions(props.parts, props.members, draft))
+
+// 一个分支一行，一行最多 100 个百分点：先填的成员先占额度，后填的只剩「100 − 其他成员合计」。
+const rowOthersTotal = (partId, studentId) => props.members
+  .filter((member) => String(member.studentId) !== String(studentId))
+  .reduce((sum, member) => sum + Number(draft[cellKey(partId, member.studentId)] || 0), 0)
+const cellLimitFor = (partId, studentId) => cellLimit(rowOthersTotal(partId, studentId))
+
+const clampFlash = ref('')
+let clampTimer = 0
+const flashClamped = (key) => {
+  clampFlash.value = key
+  clearTimeout(clampTimer)
+  clampTimer = setTimeout(() => { clampFlash.value = '' }, 900)
+}
+
+// 输入即钳位：140 只能留 100；额度已被前面的成员占满时，这一格只能填 0。
+// 直接改 DOM value，因为钳位后的字符串可能和上一次渲染一致，Vue 不会重新 patch。
+const onCellInput = (partId, studentId, event) => {
+  const key = cellKey(partId, studentId)
+  const raw = String(event.target.value ?? '')
+  // 允许「12.」这类没输完的小数，否则小数点会被吃掉
+  if (raw === '' || raw === '-' || raw.endsWith('.')) {
+    draft[key] = raw
+    return
+  }
+  const parsed = Number(raw)
+  const clamped = String(clampCellValue(raw, rowOthersTotal(partId, studentId)))
+  draft[key] = clamped
+  if (event.target.value !== clamped) event.target.value = clamped
+  if (Number.isFinite(parsed) && parsed > Number(clamped)) flashClamped(key)
+}
 
 // No member confirmation any more: the leader edits and saves, and scoring reads the newest
 // saved version. Saving again replaces the previous snapshot, so a leader can revise until the
@@ -179,12 +211,17 @@ const remainClass = (row) => {
 
 const fillDraft = (items) => {
   Object.keys(draft).forEach((key) => delete draft[key])
+  const stored = new Map((items || []).map((item) => [cellKey(item.assignmentPartId, item.studentId), item.share]))
+  // 逐格按剩余额度回填：历史数据或成员变动后若出现超配，也保证一行不超过 100。
   for (const part of props.parts) {
-    for (const member of props.members) draft[cellKey(part.id, member.studentId)] = ''
-  }
-  for (const item of items) {
-    const key = cellKey(item.assignmentPartId, item.studentId)
-    if (key in draft) draft[key] = String(Math.round(Number(item.share) * 10000) / 100)
+    let used = 0
+    for (const member of props.members) {
+      const key = cellKey(part.id, member.studentId)
+      const share = stored.get(key)
+      const value = share == null ? '' : String(clampCellValue(Number(share) * 100, used))
+      draft[key] = value
+      used += Number(value || 0)
+    }
   }
 }
 
@@ -399,6 +436,16 @@ watch(allComplete, emitStatus)
 .wl-cell--mine:not(:disabled) {
   border-color: #a9c1ee;
   background: #fbfdff;
+}
+
+/* 输入被钳位时的短暂提示：140 → 100、额度已满 → 0 */
+.wl-cell--clamped {
+  animation: wl-clamp .9s ease;
+}
+
+@keyframes wl-clamp {
+  0% { border-color: #e0a33a; background: #fff4e0; }
+  100% { border-color: #dce5ef; background: #fff; }
 }
 
 .wl-remain {
