@@ -132,6 +132,21 @@ public class TeachingService {
         auditService.record(teacher, "STUDENT_DROPPED", "COURSE", courseId, Map.of("studentId", studentId));
     }
 
+    /** 批量移除：去重后一次性 UPDATE，返回移除条数与被跳过的条数（已不在课程中的）。 */
+    @Transactional
+    public Map<String, Object> dropStudents(UserPrincipal teacher, long courseId, List<Long> studentIds) {
+        require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        for (Long id : studentIds) {
+            if (id != null) ids.add(id);
+        }
+        require(!ids.isEmpty(), HttpStatus.BAD_REQUEST, "请先选择要移除的学生");
+        int removed = mapper.dropStudents(courseId, new ArrayList<>(ids));
+        auditService.record(teacher, "STUDENTS_DROPPED", "COURSE", courseId,
+                Map.of("requested", ids.size(), "removed", removed));
+        return Map.of("requested", ids.size(), "removed", removed, "skipped", ids.size() - removed);
+    }
+
     @Transactional
     public Map<String, Object> createAssignment(UserPrincipal teacher, long courseId, AssignmentCreateRequest request) {
         require(mapper.ownsCourse(courseId, teacher.id()) == 1, HttpStatus.NOT_FOUND, "课程不存在或不属于当前教师");

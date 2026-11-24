@@ -373,6 +373,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `GET /teacher/courses/{courseId}/classes/{classId}/students` | 无 | 班级学生名册数组 | 200 |
 | `POST /teacher/courses/{courseId}/students/import` | `StudentImportRequest` | `StudentCourseUpdateResult` | 200 |
 | `DELETE /teacher/courses/{courseId}/students/{studentId}` | 无 | `null` | 200 |
+| `POST /teacher/courses/{courseId}/students/drop` | `StudentDropRequest` | `{requested,removed,skipped}` | 200 |
 | `POST /teacher/courses/{courseId}/assignments` | `AssignmentCreateRequest` | `{id,status:"PUBLISHED"}` | **201** |
 | `GET /teacher/assignments/{assignmentId}` | 无 | 作业详情（含评价分支与锁定标记） | 200 |
 | `PUT /teacher/assignments/{assignmentId}` | `AssignmentUpdateRequest` | `null` | 200 |
@@ -407,6 +408,7 @@ role,username,displayName,department,major,class,grade,initialPassword
   - 已在课程且 `ACTIVE` 的跳过，`DROPPED`/`INACTIVE` 的重新激活（`join_method='IMPORT'`）；学号查不到账号的记入 `notFound`，不阻断其余导入。
   - 响应 `StudentCourseUpdateResult` 为 `{success, skipped, notFound: string[]}`；写入 `STUDENTS_IMPORTED` 审计，记录成功/跳过/未找到数量与所选班级 ID。
 - `DELETE /teacher/courses/{courseId}/students/{studentId}` 把 `student_course.status` 置为 `DROPPED`，不删除学生账号。前端按学号在本地名单中解析出 `studentId` 后调用。
+- `POST /teacher/courses/{courseId}/students/drop` 是批量版本，供「学生管理」勾选多人后一次移除：请求体 `{ "studentIds": [12, 15, 18] }`，`studentIds` 必填、去重后最多 500 个；后端用单条 `UPDATE ... WHERE status='ACTIVE' AND student_id IN (...)` 处理，返回 `{requested, removed, skipped}`，`skipped` 是本来就不在课程中的条数，不算失败。前端不要循环调用单条 `DELETE`，避免中途失败只删了一半。两种移除都不删除学生账号，写入 `STUDENTS_DROPPED` 审计。
 
 创建作业：
 
@@ -479,17 +481,16 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 | 方法与路径 | 请求 | 成功 `data` | HTTP |
 |---|---|---|---|
-| `PUT /teacher/submissions/{submissionId}/grade` | `{groupScore,comment?}` | `null` | 200 |
+| `PUT /teacher/submissions/{submissionId}/grade` | `{groupScore,comment?}` | `{scoringSkipped,scoringRunId?,scoringStatus?,contributionSource?,memberCount?}` 或 `{scoringSkipped:true,scoringMessage}` | 200 |
 | `PUT /teacher/assignments/{assignmentId}/groups/{groupId}/workload` | `WorkloadAllocationRequest` | `{id,version,status}` | 200 |
 | `GET /teacher/assignments/{assignmentId}/groups/{groupId}/workload` | 无 | 最新工作量版本、明细和确认状态 | 200 |
 | `POST /teacher/submissions/{submissionId}/scoring-runs` | 无 | 运行详情 | 200 |
 | `GET /teacher/scoring-runs/{runId}` | 无 | 运行详情 | 200 |
-| `PUT /teacher/scoring-runs/{runId}/review` | `ScoreReviewRequest` | `null` | 200 |
 | `POST /teacher/scoring-runs/{runId}/publish` | 无 | `null` | 200 |
 | `GET /teacher/appeals` | 无 | 申诉数组 | 200 |
 | `PUT /teacher/appeals/{appealId}` | `AppealResolveRequest` | `null` | 200 |
 
-团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；成功后提交状态为 `GRADED` 并生成待复核运行。输入不满足评分条件时返回真实错误并回滚本次批改，不会直接生成已发布的兜底成绩；模型不可用仍通过确定性规则生成待复核运行。
+团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；保存成功后提交状态为 `GRADED`，**同一请求内立即按分工比例运行一次评分**并返回本次运行信息（`scoringRunId`、`scoringStatus`、`memberCount`），个人成绩随后在「成绩查看」一键发布（发布即采用算法分）。`contributionSource` 为 `workload`（采用最新 `LOCKED` 分工）或 `equal_split`（该组从未保存分工，按组内均分计算）。评分前置条件不满足（例如作业没有评价分支、小组没有有效成员）时不回滚团队成绩，返回 `{scoringSkipped:true,scoringMessage}`，教师补录后再点「重新运行评分」即可。输入不满足评分条件时不会生成已发布的兜底成绩；模型不可用仍通过确定性规则生成待复核运行。
 
 工作量请求：
 
@@ -549,21 +550,15 @@ role,username,displayName,department,major,class,grade,initialPassword
 }
 ```
 
-复核请求必须一次包含本次运行全部结果且 ID 一一对应：
+**逐人复核流程已取消**：`PUT /teacher/scoring-runs/{runId}/review` 与 `ScoreReviewRequest` 已删除。发布是教师的唯一出口，服务端按状态自动分流：
 
-```json
-{
-  "decisions": [
-    {"scoreResultId":10,"finalScore":86.0,"reason":"结合原始作品复核后调整"}
-  ]
-}
-```
+- `MODEL_COMPLETE` / `DEGRADED`：先把本次运行 `DRAFT` 结果的 `final_score` 原样保留（`manual_adjustment=0`）、`status` 置为 `REVIEWED`、`review_reason` 写「发布时采用算法建议分（未人工调整）」，再走 `APPROVED`，写一条 `SCORING_RUN_AUTO_APPROVED` 审计；没有可发布的草稿结果返回 409。
+- `APPROVED`：直接发布，仍要求全部结果为 `REVIEWED`。
+- 其他状态（`PENDING_REVIEW`、`FAILED` 等）返回 409，非归属运行返回 404。
 
-`finalScore` 为 `0..100`。若与当前建议分相差超过 `0.005`，`reason` 必填且最长 500。全部结果成功变为 `REVIEWED` 后运行变为 `APPROVED`。只有 `APPROVED` 且全部结果为 `REVIEWED` 才可发布，否则返回 409；非归属运行返回 404。
+发布只作用于路径中的 `runId`、该运行的个人成绩、对应提交和查询投影，不联动同一作业的其他小组或历史运行。重复发布已经发布的运行返回 200，但不修改发布时间、审计或投影，也不重置申诉后的成绩。发布通过数据库行锁串行处理。需要人工改分的场景走「成绩申诉」，不再经过复核弹窗。
 
-发布只作用于路径中的 `runId`、该运行的个人成绩、对应提交和查询投影，不联动同一作业的其他小组或历史运行。重复发布已经发布的运行返回 200，但不修改发布时间、审计或投影，也不重置申诉后的成绩。复核与发布通过数据库行锁串行处理。
-
-教师成绩列表增加 `runStatus`，表示当前返回的 `scoringRunId` 状态；`scorePublished` 随当前运行计算，不能沿用更早运行的已发布标记。教师页面按小组逐人复核、单独发布，展示当前结果状态。
+教师成绩列表增加 `runStatus`，表示当前返回的 `scoringRunId` 状态；`scorePublished` 随当前运行计算，不能沿用更早运行的已发布标记。教师页面按小组分段展示（按组号升序、未分组垫尾），一次可发布该作业全部待发布小组；前端对每个小组各发一次发布请求，某个组失败不影响其他组。
 
 教师申诉项：`id`、`scoreResultId`、`studentId`、`studentName`、`courseId`、`assignmentTitle`、`reason`、`evidence`、`status`、`resolution`、`submittedAt`、`resolvedAt`、`currentScore`。
 

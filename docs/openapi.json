@@ -52,49 +52,6 @@
         }
       }
     },
-    "/api/v1/teacher/scoring-runs/{runId}/review": {
-      "put": {
-        "tags": [
-          "teacher-scoring-controller"
-        ],
-        "operationId": "review",
-        "parameters": [
-          {
-            "name": "runId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ScoreReviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponseVoid"
-                }
-              }
-            }
-          }
-        },
-        "summary": "逐人复核本次评分运行",
-        "description": "必须提交本次运行的全部成员成绩；调整建议分必须填写理由。只有 MODEL_COMPLETE 或 DEGRADED 可复核，成功后进入 APPROVED。"
-      }
-    },
     "/api/v1/teacher/assignments/{assignmentId}/groups/{groupId}/workload": {
       "get": {
         "tags": [
@@ -2426,44 +2383,6 @@
             "type": "string"
           }
         }
-      },
-      "Decision": {
-        "type": "object",
-        "properties": {
-          "scoreResultId": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "finalScore": {
-            "type": "number",
-            "format": "double",
-            "maximum": 100,
-            "minimum": 0
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 0
-          }
-        },
-        "required": [
-          "finalScore"
-        ]
-      },
-      "ScoreReviewRequest": {
-        "type": "object",
-        "properties": {
-          "decisions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Decision"
-            },
-            "minItems": 1
-          }
-        },
-        "required": [
-          "decisions"
-        ]
       },
       "MemberShare": {
         "type": "object",

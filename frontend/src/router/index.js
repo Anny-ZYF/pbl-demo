@@ -103,7 +103,7 @@ const routes = [
         path: 'course/:courseId/assignments/:assignmentId/grading',
         name: 'teacher-assignment-grading',
         component: () => import('@/views/teacher/TeacherAssignmentGradingView.vue'),
-        meta: { title: '批改作业' }
+        meta: { title: '查看作业' }
       },
       {
         path: 'course/:courseId/students',

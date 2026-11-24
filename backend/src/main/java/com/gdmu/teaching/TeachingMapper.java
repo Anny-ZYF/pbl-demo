@@ -175,6 +175,16 @@ public interface TeachingMapper {
     @Update("UPDATE student_course SET status='DROPPED',update_time=CURRENT_TIMESTAMP WHERE student_id=#{studentId} AND course_id=#{courseId} AND status='ACTIVE'")
     int dropStudent(@Param("studentId") long studentId, @Param("courseId") long courseId);
 
+    /** 批量移除：只处理仍为 ACTIVE 的记录，返回实际改动行数。 */
+    @Update("""
+            <script>
+            UPDATE student_course SET status='DROPPED',update_time=CURRENT_TIMESTAMP
+            WHERE course_id=#{courseId} AND status='ACTIVE' AND student_id IN
+            <foreach collection='studentIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>
+            </script>
+            """)
+    int dropStudents(@Param("courseId") long courseId, @Param("studentIds") List<Long> studentIds);
+
     @Insert("""
             INSERT INTO assignment(title,description,course_id,teacher_id,deadline,status,published_at,total_score,
               require_contribution,enable_intelligent_scoring,standard_group_size,created_at,updated_at)

@@ -13,6 +13,9 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.gdmu.common.BusinessException;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -101,9 +104,8 @@ class TeachingServiceGroupMembershipTest {
     }
 
     @Test
-    void regularMemberCannotEditContributionScoresDuringSubmission() {
+    void regularMemberCannotSubmitOnBehalfOfTheGroup() {
         when(mapper.studentGroup(11, 9)).thenReturn(21L);
-        when(mapper.assignmentPublishedAt(11)).thenReturn(LocalDateTime.now().minusDays(3));
         when(mapper.assignmentDeadline(11)).thenReturn(LocalDateTime.now().plusDays(1));
         when(mapper.activeGroupMemberRole(21, 9)).thenReturn("MEMBER");
         StudentSubmissionRequest request = new StudentSubmissionRequest(
@@ -112,45 +114,39 @@ class TeachingServiceGroupMembershipTest {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.submit(student, 11, request));
 
-        assertEquals("只有小组组长可以编辑贡献度", exception.getMessage());
+        assertEquals("只有小组组长可以编辑并提交作业", exception.getMessage());
     }
 
     @Test
-    void existingWorkloadVersionIsNotOverwrittenByLegacyContributionScores() {
+    void submitIsBlockedUntilTheGroupHasALockedWorkloadVersion() {
         when(mapper.studentGroup(11, 9)).thenReturn(21L);
-        when(mapper.assignmentPublishedAt(11)).thenReturn(LocalDateTime.now().minusDays(3));
         when(mapper.assignmentDeadline(11)).thenReturn(LocalDateTime.now().plusDays(1));
-        when(mapper.usableWorkloadSetCount(21, 11)).thenReturn(1);
-        when(mapper.lockSubmission(11, 21)).thenReturn(null);
-        StudentSubmissionRequest request = new StudentSubmissionRequest(
-                "作业正文", null, null, List.of(), Map.of(9L, BigDecimal.valueOf(100)));
-
-        service.submit(student, 11, request);
-
-        verify(mapper, never()).nextSubmissionWorkloadVersion(21, 11);
-        verify(mapper, never()).supersedeSubmissionWorkloads(21, 11);
-        verify(mapper, never()).insertSubmissionWorkloadSet(21, 11, 1, 9);
-    }
-
-    @Test
-    void legacyContributionScoresStillApplyWhenNoWorkloadVersionExists() {
-        when(mapper.studentGroup(11, 9)).thenReturn(21L);
-        when(mapper.assignmentPublishedAt(11)).thenReturn(LocalDateTime.now().minusDays(3));
-        when(mapper.assignmentDeadline(11)).thenReturn(LocalDateTime.now().plusDays(1));
-        when(mapper.usableWorkloadSetCount(21, 11)).thenReturn(0);
         when(mapper.activeGroupMemberRole(21, 9)).thenReturn("LEADER");
-        when(mapper.activeGroupStudentIds(21, 11)).thenReturn(List.of(9L));
-        when(mapper.nextSubmissionWorkloadVersion(21, 11)).thenReturn(1);
-        when(mapper.submissionWorkloadSetId(21, 11, 1)).thenReturn(55L);
-        when(mapper.assignmentPartIds(11)).thenReturn(List.of(101L));
+        when(mapper.lockedWorkloadCount(11, 21)).thenReturn(0);
+        StudentSubmissionRequest request = new StudentSubmissionRequest(
+                "作业正文", null, null, List.of(), Map.of(9L, BigDecimal.valueOf(100)));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.submit(student, 11, request));
+
+        assertEquals("请先在「小组分工」中填写并保存贡献度，再提交作业", exception.getMessage());
+        verify(mapper, never()).upsertSubmission(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void legacyContributionScoresNoLongerCreateAWorkloadVersionOnSubmit() {
+        when(mapper.studentGroup(11, 9)).thenReturn(21L);
+        when(mapper.assignmentDeadline(11)).thenReturn(LocalDateTime.now().plusDays(1));
+        when(mapper.activeGroupMemberRole(21, 9)).thenReturn("LEADER");
+        when(mapper.lockedWorkloadCount(11, 21)).thenReturn(1);
         when(mapper.lockSubmission(11, 21)).thenReturn(null);
         StudentSubmissionRequest request = new StudentSubmissionRequest(
                 "作业正文", null, null, List.of(), Map.of(9L, BigDecimal.valueOf(100)));
 
         service.submit(student, 11, request);
 
-        verify(mapper).nextSubmissionWorkloadVersion(21, 11);
-        verify(mapper).insertSubmissionWorkloadSet(21, 11, 1, 9);
-        verify(mapper).insertSubmissionWorkloadItem(55L, 101L, 9L, BigDecimal.valueOf(1).setScale(6));
+        // 分工只由「小组分工」面板写入；提交请求里的旧贡献度不再落库，也不会作废现有分工版本。
+        verify(mapper).upsertSubmission(eq(11L), eq(21L), eq(9L), any());
+        verify(mapper, never()).supersedeGroupWorkloads(11, 21);
     }
 }

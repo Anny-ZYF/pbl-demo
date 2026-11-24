@@ -18,6 +18,8 @@ export const importStudents = (courseId, payload) => http.post(
   Array.isArray(payload) ? { studentNos: payload } : payload
 )
 export const dropStudent = (courseId, studentId) => http.delete(`/teacher/courses/${courseId}/students/${studentId}`)
+// 批量移除只发一次请求，避免逐个 DELETE 造成半途失败、名单只删了一半。
+export const dropStudents = (courseId, studentIds) => http.post(`/teacher/courses/${courseId}/students/drop`, { studentIds })
 export const getGroups = (assignmentId) => http.get(`/teacher/assignments/${assignmentId}/groups`)
 export const getGroupMembers = (assignmentId, groupId) => http.get(`/teacher/assignments/${assignmentId}/groups/${groupId}/members`)
 export const getTeacherWorkload = (assignmentId, groupId) => http.get(`/teacher/assignments/${assignmentId}/groups/${groupId}/workload`)
@@ -27,6 +29,5 @@ export const runScoring = (submissionId) => http.post(`/teacher/submissions/${su
 export const gradeSubmission = (submissionId, data) => http.put(`/teacher/submissions/${submissionId}/grade`, data)
 export const publishScoringRun = (runId) => http.post(`/teacher/scoring-runs/${runId}/publish`)
 export const getScoringRun = (runId) => http.get(`/teacher/scoring-runs/${runId}`)
-export const reviewScoringRun = (runId, data) => http.put(`/teacher/scoring-runs/${runId}/review`, data)
 export const getTeacherAppeals = () => http.get('/teacher/appeals')
 export const resolveScoreAppeal = (appealId, data) => http.put(`/teacher/appeals/${appealId}`, data)

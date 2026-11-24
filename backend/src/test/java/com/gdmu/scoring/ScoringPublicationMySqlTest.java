@@ -95,10 +95,7 @@ class ScoringPublicationMySqlTest {
     }
 
     @Test
-    void rejectsUnreviewedAndPartiallyReviewedRunsWithoutPublishingAnyRows() {
-        long unreviewed = run(groupA, submissionA, "DEGRADED", "DRAFT", 80, students[0], students[1]);
-        assertThatThrownBy(() -> service.publish(teacher, unreviewed)).isInstanceOf(BusinessException.class);
-        assertThat(status(unreviewed)).isEqualTo("DEGRADED");
+    void rejectsPartiallyReviewedApprovedRunsWithoutPublishingAnyRows() {
         long partial = run(groupA, submissionA, "APPROVED", "REVIEWED", 80, students[0], students[1]);
         jdbc.update("UPDATE score_result SET status='DRAFT' WHERE scoring_run_id=? AND student_id=?", partial, students[1]);
         assertThatThrownBy(() -> service.publish(teacher, partial)).isInstanceOf(BusinessException.class);
@@ -108,15 +105,12 @@ class ScoringPublicationMySqlTest {
     }
 
     @Test
-    void completeReviewIsRequiredBeforePublication() {
+    void publishingADegradedRunKeepsAlgorithmScoresWithoutManualReview() {
         long selected = run(groupA, submissionA, "DEGRADED", "DRAFT", 80, students[0], students[1]);
-        List<ScoreReviewRequest.Decision> decisions = jdbc.queryForList("SELECT id FROM score_result WHERE scoring_run_id=? ORDER BY id", selected).stream()
-                .map(row -> new ScoreReviewRequest.Decision(((Number) row.get("id")).longValue(), 82.0, "Verified original work")).toList();
-        service.reviewAndApprove(teacher, selected, new ScoreReviewRequest(decisions));
-        assertThat(status(selected)).isEqualTo("APPROVED");
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM score_result WHERE scoring_run_id=? AND status='REVIEWED' AND reviewed_by_teacher_id=?", Integer.class, selected, teacher.id())).isEqualTo(2);
         service.publish(teacher, selected);
-        assertThat(jdbc.queryForObject("SELECT score FROM final_score WHERE student_id=? AND assignment_id=?", Double.class, students[0], assignmentId)).isEqualTo(82.0);
+        assertThat(status(selected)).isEqualTo("PUBLISHED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM score_result WHERE scoring_run_id=? AND status='REVIEWED' AND manual_adjustment=0 AND reviewed_by_teacher_id=?", Integer.class, selected, teacher.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT score FROM final_score WHERE student_id=? AND assignment_id=?", Double.class, students[0], assignmentId)).isEqualTo(80.0);
     }
 
     @Test

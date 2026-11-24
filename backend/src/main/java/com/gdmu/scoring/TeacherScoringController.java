@@ -22,10 +22,11 @@ public class TeacherScoringController {
     }
 
     @PutMapping("/submissions/{submissionId}/grade")
-    public ApiResponse<Void> grade(@AuthenticationPrincipal UserPrincipal teacher, @PathVariable long submissionId,
-                                   @Valid @RequestBody GradeSubmissionRequest request) {
-        service.gradeSubmission(teacher, submissionId, request);
-        return ApiResponse.ok(null);
+    @Operation(summary = "录入团队成绩", description = "保存团队成绩后立即按分工比例运行一次评分，返回本次运行与个人成绩条数；评分前置条件不满足时只跳过评分，团队成绩仍会保存。")
+    public ApiResponse<Map<String, Object>> grade(@AuthenticationPrincipal UserPrincipal teacher,
+                                                  @PathVariable long submissionId,
+                                                  @Valid @RequestBody GradeSubmissionRequest request) {
+        return ApiResponse.ok(service.gradeSubmission(teacher, submissionId, request));
     }
 
     @PutMapping("/assignments/{assignmentId}/groups/{groupId}/workload")
@@ -54,16 +55,8 @@ public class TeacherScoringController {
         return ApiResponse.ok(service.runDetails(teacher, runId));
     }
 
-    @PutMapping("/scoring-runs/{runId}/review")
-    @Operation(summary = "逐人复核本次评分运行", description = "必须提交本次运行的全部成员成绩；调整建议分必须填写理由。只有 MODEL_COMPLETE 或 DEGRADED 可复核，成功后进入 APPROVED。")
-    public ApiResponse<Void> review(@AuthenticationPrincipal UserPrincipal teacher, @PathVariable long runId,
-                                    @Valid @RequestBody ScoreReviewRequest request) {
-        service.reviewAndApprove(teacher, runId, request);
-        return ApiResponse.ok(null);
-    }
-
     @PostMapping("/scoring-runs/{runId}/publish")
-    @Operation(summary = "发布本次已复核的评分运行", description = "仅发布路径中指定的运行及其成员结果，不影响同作业其他运行。运行须为 APPROVED 且全部结果为 REVIEWED，否则返回 409；不属于当前教师返回 404。重复发布已发布的运行返回 200，不改写时间、投影或审计。")
+    @Operation(summary = "发布评分运行", description = "教师的唯一发布入口：MODEL_COMPLETE/DEGRADED 的运行会先按算法分自动落为已复核再发布，APPROVED 的直接发布；仅影响路径中指定的运行。已发布重复调用返回 200，不改写时间、投影或审计。")
     public ApiResponse<Void> publish(@AuthenticationPrincipal UserPrincipal teacher, @PathVariable long runId) {
         service.publish(teacher, runId);
         return ApiResponse.ok(null);

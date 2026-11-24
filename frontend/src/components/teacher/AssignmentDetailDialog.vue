@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="作业详情" width="760px" :close-on-click-modal="false">
+  <el-dialog v-model="visible" title="编辑作业" width="760px" :close-on-click-modal="false">
     <div v-if="loading" class="ad-loading">正在加载作业详情…</div>
 
     <template v-else-if="detail">

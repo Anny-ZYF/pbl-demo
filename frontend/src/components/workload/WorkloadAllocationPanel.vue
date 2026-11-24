@@ -2,8 +2,8 @@
   <section class="workload-card">
     <div class="wl-head">
       <div>
-        <h2>小组与工作量分配</h2>
-        <p>按评价分支填写每位成员的工作量份额，每行合计须为 100；超出剩余额度的输入会自动钳位</p>
+        <h2>{{ cardTitle }}</h2>
+        <p>{{ cardHint }}</p>
       </div>
       <span class="wl-role">{{ roleHint }}</span>
     </div>
@@ -16,7 +16,8 @@
         <span>{{ statusBanner }}</span>
       </div>
 
-      <div class="wl-scroll">
+      <div v-if="!parts.length || !members.length" class="wl-state">当前作业没有评价分支或小组成员</div>
+      <div v-else class="wl-scroll">
         <table class="wl-table">
           <thead>
             <tr>
@@ -72,7 +73,7 @@
         <div class="wl-actions">
           <span class="wl-hint" :class="hintClass">{{ validationHint }}</span>
           <button v-if="editable" class="wl-primary" :disabled="!canSubmit" @click="submit">
-            {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : '提交分工' }}
+            {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : (teacherMode ? '保存分工' : '提交分工') }}
           </button>
         </div>
       </div>
@@ -84,29 +85,41 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getWorkload, proposeWorkload } from '@/api/student'
+import { getTeacherWorkload, saveTeacherWorkload } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
 import { isAutoLocked } from '@/utils/assignmentWindow'
 import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, cellLimit, clampCellValue } from '@/utils/workload'
 
 const props = defineProps({
   assignmentId: { type: [String, Number], required: true },
-  groupId: { type: [String, Number], required: true },
+  groupId: { type: [String, Number], default: null },
   parts: { type: Array, default: () => [] },
   members: { type: Array, default: () => [] },
   isLeader: { type: Boolean, default: false },
   readOnly: { type: Boolean, default: false },
-  currentStudentId: { type: [String, Number], default: null }
+  currentStudentId: { type: [String, Number], default: null },
+  // 教师端复用同一张表：读教师接口、允许补录，标题和状态文案跟着换。
+  teacherMode: { type: Boolean, default: false }
 })
-const emit = defineEmits(['changed', 'status'])
+const emit = defineEmits(['changed', 'status', 'dirty'])
 
 const workload = ref(null)
 const draft = reactive({})
+const baseline = ref({})
 const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 
+const cardTitle = computed(() => (props.teacherMode ? '小组分工与贡献度' : '小组与工作量分配'))
+// 教师端文案跟着可编辑状态走：成绩发布后是只读的，不能再写「可补录」。
+const cardHint = computed(() => {
+  if (!props.teacherMode) return '按评价分支填写每位成员的工作量份额，每行合计须为 100；超出剩余额度的输入会自动钳位'
+  if (props.readOnly) return '各成员在每个评价分支的工作量份额；成绩已发布，本表仅供查看'
+  return '各成员在每个评价分支的工作量份额，每行合计须为 100；修改后点下方「保存分工」生成新版本'
+})
+
 const pct = (weight) => `${(Number(weight) * 100).toFixed(0)}%`
-const isMine = (member) => props.currentStudentId != null
+const isMine = (member) => !props.teacherMode && props.currentStudentId != null
   && String(member.studentId) === String(props.currentStudentId)
 
 const rows = computed(() => buildRows(props.parts, props.members, draft))
@@ -144,17 +157,18 @@ const onCellInput = (partId, studentId, event) => {
   if (Number.isFinite(parsed) && parsed > Number(clamped)) flashClamped(key)
 }
 
-// No member confirmation any more: the leader edits and saves, and scoring reads the newest
-// saved version. Saving again replaces the previous snapshot, so a leader can revise until the
-// deadline (or until the group is graded).
-const editable = computed(() => props.isLeader && !props.readOnly)
-const canSubmit = computed(() => editable.value && allComplete.value && !saving.value)
+// 学生端只有组长能改；教师端只要能补录就能改（成绩发布后冻结）。
+const editable = computed(() => (props.teacherMode
+  ? !props.readOnly
+  : props.isLeader && !props.readOnly))
+const canSubmit = computed(() => editable.value && allComplete.value && !saving.value && props.groupId != null)
 
 const autoLocked = computed(() => isAutoLocked(workload.value?.autoLocked))
 
 const roleHint = computed(() => {
   if (autoLocked.value) return '截止自动锁定 · 不可编辑'
-  if (props.readOnly) return '当前阶段只读'
+  if (props.readOnly) return props.teacherMode ? '成绩已发布 · 只读' : '当前阶段只读'
+  if (props.teacherMode) return editable.value ? '教师补录 · 可编辑' : '只读'
   if (!props.isLeader) return '由组长填写，仅供查看'
   return editable.value ? '我是组长 · 可编辑' : '已锁定 · 不可编辑'
 })
@@ -162,9 +176,14 @@ const roleHint = computed(() => {
 const statusBanner = computed(() => {
   const version = workload.value?.versionNo ?? '—'
   if (!workload.value) {
+    if (props.teacherMode) {
+      if (props.readOnly) return '该组没有分工版本；成绩已发布，不能再补录'
+      return '该组尚无分工版本，可直接填写各成员份额并保存；未填写时评分按组内均分计算'
+    }
     return props.isLeader ? '尚无分工方案，请填写各成员份额后保存' : '组长尚未填写工作量分配'
   }
   if (workload.value.status === 'LOCKED') {
+    if (props.teacherMode) return `第 ${version} 版已保存并锁定，评分将采用此版本${editable.value ? '；再次保存会生成新版本' : ''}`
     return autoLocked.value
       ? `第 ${version} 版已在截止时间自动锁定，评分将采用此版本`
       : `第 ${version} 版已保存，评分将采用此版本${editable.value ? '，可继续修改后另存新版本' : ''}`
@@ -182,9 +201,10 @@ const statusClass = computed(() => ({
 
 const validationHint = computed(() => {
   if (!editable.value) {
+    if (props.teacherMode && props.readOnly) return '成绩已发布，不可编辑'
     return props.readOnly ? '当前阶段不可编辑' : '由组长填写'
   }
-  if (allComplete.value) return '全部分支合计均为 100，可提交'
+  if (allComplete.value) return props.teacherMode ? '全部分支合计均为 100，可保存' : '全部分支合计均为 100，可提交'
   const over = rows.value.filter((row) => row.remaining < -ROW_TOLERANCE).length
   if (over) return `有 ${over} 个分支超出 100，请调减`
   const pending = rows.value.filter((row) => row.remaining > ROW_TOLERANCE).length
@@ -223,7 +243,17 @@ const fillDraft = (items) => {
       used += Number(value || 0)
     }
   }
+  baseline.value = { ...draft }
 }
+
+// 改了份额但还没保存：教师端保存团队成绩前要先拦住，否则新分工不会进评分。
+const isDirty = computed(() => {
+  const keys = new Set([...Object.keys(baseline.value), ...Object.keys(draft)])
+  for (const key of keys) {
+    if (String(baseline.value[key] ?? '') !== String(draft[key] ?? '')) return true
+  }
+  return false
+})
 
 const emitStatus = () => emit('status', {
   hasVersion: Boolean(workload.value),
@@ -235,10 +265,13 @@ const emitStatus = () => emit('status', {
 })
 
 const load = async () => {
+  if (props.groupId == null) return
   loading.value = true
   errorMessage.value = ''
   try {
-    const data = await getWorkload(props.assignmentId)
+    const data = props.teacherMode
+      ? await getTeacherWorkload(props.assignmentId, props.groupId)
+      : await getWorkload(props.assignmentId)
     workload.value = data
     fillDraft(data?.items || [])
   } catch (error) {
@@ -251,6 +284,7 @@ const load = async () => {
   } finally {
     loading.value = false
     emitStatus()
+    emit('dirty', false)
   }
 }
 
@@ -259,13 +293,18 @@ const submit = async () => {
   saving.value = true
   errorMessage.value = ''
   try {
-    await proposeWorkload(props.assignmentId, props.groupId,
-      buildAllocationPayload(props.parts, props.members, draft))
+    if (props.teacherMode) {
+      await saveTeacherWorkload(props.assignmentId, props.groupId,
+        buildAllocationPayload(props.parts, props.members, draft))
+    } else {
+      await proposeWorkload(props.assignmentId, props.groupId,
+        buildAllocationPayload(props.parts, props.members, draft))
+    }
     ElMessage.success('分工已保存，评分将采用这一版本')
     await load()
     emit('changed')
   } catch (error) {
-    errorMessage.value = getErrorMessage(error, '分工保存失败')
+    errorMessage.value = getErrorMessage(error, props.teacherMode ? '补录分工失败' : '分工保存失败')
   } finally {
     saving.value = false
   }
@@ -273,6 +312,7 @@ const submit = async () => {
 
 watch(() => [props.assignmentId, props.groupId], () => load(), { immediate: true })
 watch(allComplete, emitStatus)
+watch(isDirty, (value) => emit('dirty', value))
 </script>
 
 <style scoped>

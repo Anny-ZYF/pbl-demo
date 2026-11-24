@@ -372,23 +372,22 @@ public interface ScoringMapper {
             """)
     List<Map<String, Object>> runResults(long runId);
 
-    @Select("SELECT final_score FROM score_result WHERE id=#{resultId} AND scoring_run_id=#{runId}")
-    Double currentSuggestedScore(@Param("resultId") long resultId, @Param("runId") long runId);
-
-    @Update("""
-            UPDATE score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id JOIN assignment a ON a.id=sr.assignment_id
-            SET r.manual_adjustment=ROUND(#{score}-r.final_score,2),r.final_score=#{score},
-                r.review_reason=#{reason},r.reviewed_by_teacher_id=#{teacherId},r.reviewed_at=CURRENT_TIMESTAMP,
-                r.status='REVIEWED',r.updated_at=CURRENT_TIMESTAMP
-            WHERE r.id=#{resultId} AND sr.id=#{runId} AND a.teacher_id=#{teacherId}
-              AND sr.status IN ('MODEL_COMPLETE','DEGRADED') AND r.status='DRAFT'
-            """)
-    int reviewResult(@Param("runId") long runId, @Param("resultId") long resultId,
-                     @Param("teacherId") long teacherId, @Param("score") double score,
-                     @Param("reason") String reason);
-
     @Select("SELECT COUNT(*) FROM score_result WHERE scoring_run_id=#{runId} AND status != 'REVIEWED'")
     int unreviewedResultCount(long runId);
+
+    /**
+     * 逐人复核流程已取消：发布前把本次运行的草稿成绩统一标为 REVIEWED，
+     * 最终分保持算法值（manual_adjustment=0），并把审计原因写进 review_reason。
+     */
+    @Update("""
+            UPDATE score_result r JOIN scoring_run sr ON sr.id=r.scoring_run_id JOIN assignment a ON a.id=sr.assignment_id
+            SET r.manual_adjustment=0,r.review_reason=#{reason},r.reviewed_by_teacher_id=#{teacherId},
+                r.reviewed_at=CURRENT_TIMESTAMP,r.status='REVIEWED',r.updated_at=CURRENT_TIMESTAMP
+            WHERE sr.id=#{runId} AND a.teacher_id=#{teacherId}
+              AND sr.status IN ('MODEL_COMPLETE','DEGRADED') AND r.status='DRAFT'
+            """)
+    int reviewAllResults(@Param("runId") long runId, @Param("teacherId") long teacherId,
+                         @Param("reason") String reason);
 
     @Update("""
             UPDATE scoring_run sr JOIN assignment a ON a.id=sr.assignment_id

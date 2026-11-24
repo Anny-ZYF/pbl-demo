@@ -87,6 +87,14 @@ public class TeacherController {
         return ApiResponse.ok(null);
     }
 
+    @Operation(summary = "批量移除课程学生：只移出课程并保留账号，可再次导入")
+    @PostMapping("/courses/{courseId}/students/drop")
+    public ApiResponse<Map<String, Object>> dropStudents(
+            @AuthenticationPrincipal UserPrincipal teacher, @PathVariable long courseId,
+            @Valid @RequestBody StudentDropRequest request) {
+        return ApiResponse.ok(service.dropStudents(teacher, courseId, request.studentIds()));
+    }
+
     @PostMapping("/courses/{courseId}/assignments")
     public ResponseEntity<ApiResponse<Map<String, Object>>> createAssignment(
             @AuthenticationPrincipal UserPrincipal teacher, @PathVariable long courseId,

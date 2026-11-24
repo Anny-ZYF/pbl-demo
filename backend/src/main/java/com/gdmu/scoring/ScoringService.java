@@ -25,6 +25,8 @@ import java.util.stream.Collectors;
 @Service
 public class ScoringService {
     private static final double EPSILON = 1e-6;
+    /** 发布即视为采用算法分，写进 score_result.review_reason 作为可追溯说明。 */
+    private static final String AUTO_REVIEW_REASON = "发布时采用算法建议分（未人工调整）";
     private final ScoringMapper mapper;
     private final PaperScoringEngine engine;
     private final ModelClient modelClient;
@@ -44,13 +46,32 @@ public class ScoringService {
         this.auditService = auditService;
     }
 
+    /**
+     * Records the team score and immediately runs the scoring rule so individual scores show up in
+     * the score overview without an extra click. A scoring failure (no branches, no members, ...)
+     * never rolls back the team score: the response carries {@code scoringSkipped} + the reason.
+     */
     @Transactional
-    public void gradeSubmission(UserPrincipal teacher, long submissionId, GradeSubmissionRequest request) {
+    public Map<String, Object> gradeSubmission(UserPrincipal teacher, long submissionId,
+                                               GradeSubmissionRequest request) {
         require(mapper.gradeSubmission(submissionId, teacher.id(), request.groupScore(), request.comment()) == 1,
                 HttpStatus.CONFLICT, "提交不存在、不属于当前教师或成绩已经发布");
         auditService.record(teacher, "GROUP_SCORE_RECORDED", "SUBMISSION", submissionId,
                 Map.of("groupScore", request.groupScore()));
-        runScoring(teacher, submissionId);
+        Map<String, Object> response = new LinkedHashMap<>();
+        try {
+            Map<String, Object> run = runScoring(teacher, submissionId);
+            response.put("scoringSkipped", false);
+            response.put("scoringRunId", run.get("id"));
+            response.put("scoringStatus", run.get("status"));
+            response.put("contributionSource", run.get("contributionSource"));
+            response.put("memberCount", ((List<?>) run.get("results")).size());
+        } catch (BusinessException ex) {
+            // Scoring prerequisites are not met yet (for example the assignment has no branches).
+            response.put("scoringSkipped", true);
+            response.put("scoringMessage", ex.getMessage());
+        }
+        return response;
     }
 
     @Transactional
@@ -225,17 +246,20 @@ public class ScoringService {
         // background sweeper having run first.
         autoLockExpired(context.assignmentId());
         Long workloadSetId = mapper.lockedWorkloadSet(context.assignmentId(), context.groupId());
-        if (workloadSetId == null) {
-            // There is no confirmation step any more: a saved version is locked immediately, so a
-            // missing LOCKED version simply means the group never saved a workload allocation.
-            throw new BusinessException(HttpStatus.CONFLICT,
-                    "该小组尚未保存分工版本，请组长或教师填写分工后再评分");
-        }
         List<PartRow> parts = mapper.parts(context.assignmentId());
-        List<AllocationRow> allocationRows = mapper.allocations(workloadSetId);
         List<MemberRow> members = mapper.members(context.groupId());
-        List<PaperScoringEngine.Branch> branches = buildBranches(parts, allocationRows, members);
+        require(!parts.isEmpty(), HttpStatus.CONFLICT, "作业还没有评价分支，无法生成个人成绩");
+        require(!members.isEmpty(), HttpStatus.CONFLICT, "该小组没有有效成员，无法生成个人成绩");
+        // No confirmation step any more, so a missing LOCKED version simply means the group never
+        // saved an allocation. Instead of failing the whole run we fall back to an equal split so
+        // the teacher still gets individual scores to review; the run is flagged as equal_split.
+        boolean equalized = workloadSetId == null;
+        List<AllocationRow> allocationRows = equalized ? List.of() : mapper.allocations(workloadSetId);
+        List<PaperScoringEngine.Branch> branches = equalized
+                ? equalBranches(parts, members)
+                : buildBranches(parts, allocationRows, members);
         List<PaperScoringEngine.MemberContribution> contributions = engine.contributions(branches);
+        String contributionSource = equalized ? "equal_split" : "workload";
 
         ActiveModelRow activeModel = mapper.activeModel();
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
@@ -243,6 +267,7 @@ public class ScoringService {
         inputSnapshot.put("groupId", context.groupId());
         inputSnapshot.put("standardGroupSize", context.standardGroupSize());
         inputSnapshot.put("groupScore", context.groupScore());
+        inputSnapshot.put("contributionSource", contributionSource);
         inputSnapshot.put("parts", parts);
         inputSnapshot.put("allocations", allocationRows);
         String inputJson = canonicalJson(inputSnapshot);
@@ -293,6 +318,7 @@ public class ScoringService {
             explanation.put("scoreRange", List.of(PaperScoringEngine.MIN_SCORE, PaperScoringEngine.MAX_SCORE));
             explanation.put("mode", mode);
             explanation.put("modelExplanation", prediction == null ? null : safeExplanation(prediction.explanation()));
+            explanation.put("contributionSource", contributionSource);
             explanation.put("assumption", "smoothstep rule (1108.py): threshold=1/p, B=20, score clipped to [0,100]");
             mapper.insertResult(runId, contribution.studentId(), contribution.contribution(), context.groupScore(),
                     ruleScore.roundedScore(), modelScore, delta, anomaly, suggestion, json(explanation));
@@ -301,8 +327,23 @@ public class ScoringService {
         String error = status.equals("DEGRADED") ? "模型未激活、不可用或版本不匹配，已采用确定性规则结果" : null;
         mapper.completeRun(runId, status, error);
         auditService.record(teacher, "SCORING_RUN_COMPLETED", "SCORING_RUN", runId,
-                Map.of("runNo", runNo, "status", status, "memberCount", contributions.size(), "inputHash", inputHash));
-        return runDetails(teacher, runId);
+                Map.of("runNo", runNo, "status", status, "memberCount", contributions.size(),
+                        "inputHash", inputHash, "contributionSource", contributionSource));
+        Map<String, Object> response = new LinkedHashMap<>(runDetails(teacher, runId));
+        response.put("contributionSource", contributionSource);
+        return response;
+    }
+
+    /**
+     * Equal split used when a group never saved a workload allocation: every branch gives all
+     * members the same share, so the rule still produces an explainable individual score.
+     */
+    private List<PaperScoringEngine.Branch> equalBranches(List<PartRow> parts, List<MemberRow> members) {
+        double share = 1.0 / members.size();
+        List<PaperScoringEngine.MemberShare> shares = members.stream()
+                .map(member -> new PaperScoringEngine.MemberShare(member.studentId(), share)).toList();
+        return parts.stream()
+                .map(part -> new PaperScoringEngine.Branch(part.id(), part.weight(), shares)).toList();
     }
 
     public Map<String, Object> runDetails(UserPrincipal teacher, long runId) {
@@ -314,55 +355,23 @@ public class ScoringService {
     }
 
     @Transactional
-    public void reviewAndApprove(UserPrincipal teacher, long runId, ScoreReviewRequest request) {
-        String status = mapper.lockTeacherRunStatus(runId, teacher.id());
-        require(status != null, HttpStatus.NOT_FOUND,
-                "评分运行不存在或不属于当前教师");
-        require(status.equals("MODEL_COMPLETE") || status.equals("DEGRADED"), HttpStatus.CONFLICT,
-                "当前评分运行不可复核，请刷新后重试");
-        List<Map<String, Object>> existing = mapper.runResults(runId);
-        require(!existing.isEmpty(), HttpStatus.CONFLICT, "本次运行没有可复核的成绩");
-        require(request.decisions().size() == existing.size(), HttpStatus.BAD_REQUEST, "必须复核本次运行的全部成员成绩");
-        Set<Long> expected = existing.stream().map(row -> ((Number) row.get("id")).longValue()).collect(Collectors.toSet());
-        Set<Long> actual = request.decisions().stream().map(ScoreReviewRequest.Decision::scoreResultId).collect(Collectors.toSet());
-        require(expected.equals(actual) && actual.size() == request.decisions().size(), HttpStatus.BAD_REQUEST,
-                "复核结果必须与本次运行的成员成绩一一对应");
-        List<Map<String, Object>> auditDecisions = new ArrayList<>();
-        for (var decision : request.decisions()) {
-            double reviewedScore = decision.finalScore();
-            require(Double.isFinite(reviewedScore)
-                            && reviewedScore >= PaperScoringEngine.MIN_SCORE
-                            && reviewedScore <= PaperScoringEngine.MAX_SCORE,
-                    HttpStatus.BAD_REQUEST, "最终成绩必须在0到100之间");
-            Double suggested = mapper.currentSuggestedScore(decision.scoreResultId(), runId);
-            require(suggested != null, HttpStatus.NOT_FOUND, "成绩结果不存在");
-            if (Math.abs(suggested - decision.finalScore()) > 0.005) {
-                require(decision.reason() != null && !decision.reason().isBlank(), HttpStatus.BAD_REQUEST,
-                        "人工调整算法建议分时必须填写原因");
-            }
-            require(mapper.reviewResult(runId, decision.scoreResultId(), teacher.id(), decision.finalScore(), decision.reason()) == 1,
-                    HttpStatus.CONFLICT, "成绩已复核或当前运行状态不允许复核");
-            Map<String, Object> auditDecision = new LinkedHashMap<>();
-            auditDecision.put("scoreResultId", decision.scoreResultId());
-            auditDecision.put("suggestedScore", suggested);
-            auditDecision.put("finalScore", decision.finalScore());
-            auditDecision.put("adjustment", round2(decision.finalScore() - suggested));
-            auditDecision.put("reason", decision.reason());
-            auditDecisions.add(auditDecision);
-        }
-        require(mapper.unreviewedResultCount(runId) == 0, HttpStatus.CONFLICT, "仍有未复核成绩");
-        require(mapper.approveRun(runId, teacher.id()) == 1, HttpStatus.CONFLICT, "评分运行无法批准");
-        auditService.record(teacher, "SCORING_RUN_APPROVED", "SCORING_RUN", runId,
-                Map.of("resultCount", request.decisions().size(), "decisions", auditDecisions));
-    }
-
-    @Transactional
     public void publish(UserPrincipal teacher, long runId) {
         String status = mapper.lockTeacherRunStatus(runId, teacher.id());
         require(status != null, HttpStatus.NOT_FOUND, "评分运行不存在或不属于当前教师");
         // Repeated requests must not rewrite publication dates, projections or audit history.
         if (status.equals("PUBLISHED")) return;
-        require(status.equals("APPROVED"), HttpStatus.CONFLICT, "请先完成本次运行全部成员成绩的复核");
+        // 逐人复核流程已取消：算法分即最终分。发布时先把草稿结果统一标记为已复核，
+        // 再走原来的 APPROVED -> PUBLISHED 状态机，保证成绩快照与审计口径不变。
+        if (status.equals("MODEL_COMPLETE") || status.equals("DEGRADED")) {
+            int autoReviewed = mapper.reviewAllResults(runId, teacher.id(), AUTO_REVIEW_REASON);
+            require(autoReviewed > 0, HttpStatus.CONFLICT, "本次运行没有可发布的成绩");
+            require(mapper.approveRun(runId, teacher.id()) == 1, HttpStatus.CONFLICT,
+                    "评分运行状态已变化，请刷新后重试");
+            auditService.record(teacher, "SCORING_RUN_AUTO_APPROVED", "SCORING_RUN", runId,
+                    Map.of("resultCount", autoReviewed, "reason", AUTO_REVIEW_REASON));
+            status = "APPROVED";
+        }
+        require(status.equals("APPROVED"), HttpStatus.CONFLICT, "当前评分运行状态不允许发布，请刷新后重试");
         int resultCount = mapper.runResults(runId).size();
         require(resultCount > 0 && mapper.unreviewedResultCount(runId) == 0, HttpStatus.CONFLICT,
                 "本次运行必须包含成绩且全部完成复核");

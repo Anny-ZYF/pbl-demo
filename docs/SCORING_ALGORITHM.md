@@ -44,6 +44,17 @@ c_j = Σ_i q_ji w_i
 
 示例：两个分支权重为 `0.4, 0.6`，某成员的分支份额为 `0.75, 0.50`，则贡献度为 `0.75×0.4 + 0.50×0.6 = 0.60`。
 
+### 2.1 贡献度来源（`contributionSource`）
+
+评分运行会在输入快照、解释 JSON 和审计里记录贡献度的来源：
+
+| 取值 | 含义 |
+|---|---|
+| `workload` | 采用小组最新 `LOCKED` 分工版本的份额矩阵，正常路径。 |
+| `equal_split` | 该小组从未保存分工版本时的兜底：每个分支给全部有效成员相同份额 `1/r`，`C` 因此等于 `1/r`。运行返回 `contributionSource=equal_split`，前端提示「按组内均分计算」，教师可在「查看或补录分工」中补录后重跑。 |
+
+教师录入团队成绩（`PUT /teacher/submissions/{id}/grade`）后**立即自动运行一次评分**，无需再单独点「运行 MCQS」；前置条件不满足（没有评价分支、没有有效成员）时只跳过评分，团队成绩照常保存并返回 `scoringSkipped=true` 与原因。
+
 ## 3. 确定性规则公式（`smoothstep-v1`）
 
 定义平滑函数：
@@ -93,7 +104,7 @@ x >  a:  t = (x−a)/(1−a)         s = G + B·S(t)
 
 1. **入口校验**：`groupScore` 的 DTO、`/v1/predict` 的 `ScoreFloat`（`ge=0, le=100`）、贡献度 `UnitFloat`（`ge=0, le=1`）。
 2. **公式裁剪**：Java 与 Python 规则、Python 模型预测输出、Java 最终建议分，均裁剪到 `[0,100]`。
-3. **教师复核**：`ScoreReviewRequest.finalScore()` 与 `ScoringService.reviewAndApprove` 运行时校验 `0 <= finalScore <= 100` 且为有限数。
+3. **发布落库**：`ScoringService.publish` 发布时把算法分原样写为最终分（`manual_adjustment=0`），并在 `score_result` 的 `CHECK` 约束与 `DECIMAL(6,2)` 列上兜底。
 4. **申诉调分**：`AppealResolveRequest.adjustedScore()` 与接受申诉时的服务层校验 `0..100`。
 5. **数据库**：`score_result`、`score_revision`、`scoring_rule` 等表的分数 `CHECK` 约束与 `DECIMAL(6,2)` 列；`scoring_rule.min_score=0.00`、`max_score=100.00`。
 
@@ -117,7 +128,7 @@ flowchart TD
     D --> A{"delta > 2?"}
     A -->|"是"| X["anomaly=true"]
     A -->|"否"| N["anomaly=false"]
-    S --> H["教师复核全部成员"]
+    S --> H["待发布（算法分即最终分）"]
     X --> H
     N --> H
 ```
@@ -131,7 +142,7 @@ flowchart TD
 
 运行状态语义：
 
-- 未得到可用模型批次：`DEGRADED`，但已有可复核、可发布的规则结果。
+- 未得到可用模型批次：`DEGRADED`，但已有可发布的规则结果。
 - 得到可用模型批次：`MODEL_COMPLETE`。
 
 ### 5.1 Java 对模型响应的校验
@@ -149,7 +160,7 @@ delta = |modelScore - ruleScore|
 anomaly = delta > 2
 ```
 
-严格大于 2 才异常，等于 2 不异常。无论是否异常，**教师必须复核本次运行的全部成员**。
+严格大于 2 才异常，等于 2 不异常。异常只用于提示，**不再阻断发布**：教师逐人复核流程已取消，发布即采用算法分。
 
 ## 6. XGBoost 实现与可复现性
 
@@ -224,7 +235,7 @@ pytest -q
 - 按键排序规范化后的原始输入 JSON、整批输入 SHA-256；同一业务输入不受 Java Map 构造顺序或进程重启影响。
 - 每名学生的特征 JSON 和特征 SHA-256；特征集合为 `contribution / standardGroupSize / groupScore`，**不含 `actualGroupSize`**。
 - `contribution`、`groupScore`、`ruleScore`、可选 `modelScore`、`modelRuleDelta`、`anomaly`、`finalScore`。
-- 规则解释与教师复核原因。
+- 规则解释与发布时的自动采用说明（`review_reason`）。
 
 当前解释 JSON：
 
@@ -243,7 +254,7 @@ pytest -q
 }
 ```
 
-教师复核时必须覆盖本次运行全部成员。最终分与建议分相差超过 `0.005` 时原因必填。发布后学生看到的是教师复核后的 `finalScore`，不是模型自动决定的分数。
+发布前不需要逐人复核：`publish` 会把本次运行的草稿结果统一置为 `REVIEWED`（`manual_adjustment=0`、`review_reason` 记「发布时采用算法建议分」），再进入 `PUBLISHED`。需要人工改分时走「成绩申诉」，由 `score_revision` 记录修订后的最终分。
 
 ## 8. 能力边界与公平性声明
 
@@ -297,6 +308,6 @@ mvn test
 
 模型元数据与指标 JSON 使用 UTF-8、LF 换行写入后再计算 SHA-256，与仓库的 `.gitattributes` 保持一致。否则 Windows 上生成的 CRLF 文件经 Git 规范化后会导致校验失败。模型权重、训练数据、指标数值和评分公式均不因此改变；不要通过关闭运行时校验来处理文件不一致。`score-model.joblib` 是二进制文件，同样按字节计算哈希，不得做文本换行转换。
 
-## 成绩复核与发布边界
+## 成绩发布边界
 
-每次运行必须完成全部成员复核，运行达到 `APPROVED`、结果全部为 `REVIEWED` 后才能发布。发布与查询投影只处理指定运行，不批量修改同作业其他小组或历史运行。重复发布保持原有时间、审计与申诉修订投影不变；新的待复核运行不能继承旧结果的已发布标记。录入团队分后的评分失败会回滚批改，不再生成已发布兜底成绩；模型服务异常仍按既定公式生成待复核的规则结果。
+逐人复核流程已取消。`MODEL_COMPLETE` / `DEGRADED` 的运行可直接发布：服务端先把草稿结果统一标为 `REVIEWED`（保留算法分）并置 `APPROVED`，写 `SCORING_RUN_AUTO_APPROVED` 审计，随后进入 `PUBLISHED`。发布与查询投影只处理指定运行，不批量修改同作业其他小组或历史运行。重复发布保持原有时间、审计与申诉修订投影不变；新的待复核运行不能继承旧结果的已发布标记。录入团队分后的评分失败会回滚批改，不再生成已发布兜底成绩；模型服务异常仍按既定公式生成待复核的规则结果。
