@@ -83,7 +83,23 @@ public interface AdminMapper {
     @Select("SELECT id,department_id AS departmentId,name,status FROM major ORDER BY department_id,name")
     List<Map<String, Object>> majors();
 
-    @Select("SELECT id,department_id AS departmentId,name,grade,status FROM `class` ORDER BY department_id,grade,name")
+    /**
+     * 班级本身按学院编号、不强制归属专业（V6 起 major_id 可为空），但组织树需要「院系 › 专业 › 班级」三级，
+     * 因此这里给每个班推断一个专业：优先用显式 major_id，缺失时取该班在册学生人数最多的专业。
+     * 推断不出来（班上没有学生，或学生都没填专业）时 majorId 为 null，由前端放进「未分配专业」分组。
+     */
+    @Select("""
+            SELECT c.id, c.department_id AS departmentId, c.name, c.grade, c.status,
+                   COALESCE(c.major_id, (
+                       SELECT s.major_id FROM student_users s
+                       WHERE s.class_id=c.id AND s.deleted_at IS NULL AND s.major_id IS NOT NULL
+                       GROUP BY s.major_id
+                       ORDER BY COUNT(*) DESC, s.major_id
+                       LIMIT 1
+                   )) AS majorId
+            FROM `class` c
+            ORDER BY c.department_id, c.grade, c.name
+            """)
     List<Map<String, Object>> classes();
 
     @Select("""
@@ -273,13 +289,13 @@ public interface AdminMapper {
                    (SELECT COUNT(*) FROM `class` WHERE major_id=#{id}) AS classes,
                    (SELECT COUNT(*) FROM course WHERE major_id=#{id}) AS courses,
                    (SELECT COUNT(*) FROM course_major WHERE major_id=#{id}) AS courseMajors,
-                   (SELECT COUNT(*) FROM group_table WHERE major_id=#{id}) AS groups
+                   (SELECT COUNT(*) FROM group_table WHERE major_id=#{id}) AS `groups`
             """)
     Map<String, Object> majorUsage(long id);
 
     @Select("""
             SELECT (SELECT COUNT(*) FROM student_users WHERE class_id=#{id} AND deleted_at IS NULL) AS students,
-                   (SELECT COUNT(*) FROM group_table WHERE class_id=#{id}) AS groups
+                   (SELECT COUNT(*) FROM group_table WHERE class_id=#{id}) AS `groups`
             """)
     Map<String, Object> classUsage(long id);
 

@@ -139,25 +139,83 @@
           <el-form-item label="姓名" prop="name">
             <el-input v-model.trim="accountForm.name" />
           </el-form-item>
-          <el-form-item label="所属学院" prop="departmentId">
-            <el-select v-model="accountForm.departmentId" filterable @change="clearMajorAndClass">
-              <el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" />
+          <el-form-item label="所属学院" prop="departmentName">
+            <el-select
+              v-model="accountForm.departmentName"
+              filterable
+              :filter-method="filterDepartments"
+              placeholder="搜索学院，或输入新学院名"
+              @change="clearMajorAndClass"
+              @visible-change="handleDepartmentVisible"
+            >
+              <el-option
+                v-for="item in departmentOptions"
+                :key="item.id ?? item.name"
+                :label="item.name"
+                :value="item.name"
+              >
+                <span>{{ item.name }}</span>
+                <span class="option-meta">{{ item.memberCount }} 人</span>
+              </el-option>
+              <el-option v-if="departmentCreateName" :label="departmentCreateName" :value="departmentCreateName">
+                <span class="option-create">+ 新建学院「{{ departmentCreateName }}」</span>
+              </el-option>
             </el-select>
+            <div v-if="departmentCreateName && accountForm.departmentName === departmentCreateName" class="field-hint">
+              该学院尚不存在，保存时会自动创建
+            </div>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="专业" prop="majorId">
-            <el-select v-model="accountForm.majorId" filterable :disabled="!accountForm.departmentId">
-              <el-option v-for="item in availableMajors" :key="item.id" :label="item.name" :value="item.id" />
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="专业" prop="majorName">
+            <el-select
+              v-model="accountForm.majorName"
+              filterable
+              :filter-method="filterMajors"
+              :disabled="!accountForm.departmentName"
+              :placeholder="accountForm.departmentName ? '搜索专业，或输入新专业名' : '请先选择所属学院'"
+              @visible-change="handleMajorVisible"
+            >
+              <el-option
+                v-for="item in majorOptions"
+                :key="item.id ?? item.name"
+                :label="item.name"
+                :value="item.name"
+              >
+                <span>{{ item.name }}</span>
+                <span class="option-meta">{{ item.memberCount }} 人</span>
+              </el-option>
+              <el-option v-if="majorCreateName" :label="majorCreateName" :value="majorCreateName">
+                <span class="option-create">+ 新建专业「{{ majorCreateName }}」</span>
+              </el-option>
             </el-select>
+            <div v-if="majorCreateName && accountForm.majorName === majorCreateName" class="field-hint">
+              该专业尚不存在，保存时会自动创建
+            </div>
           </el-form-item>
-          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级号（学院内统一编号）" prop="classNumber">
-            <el-input-number
-              v-model="accountForm.classNumber"
-              :min="1"
-              :max="9999"
-              :step="1"
-              :disabled="!accountForm.departmentId"
-              controls-position="right"
-            />
+          <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="班级" prop="className">
+            <el-select
+              v-model="accountForm.className"
+              filterable
+              :filter-method="filterClasses"
+              :disabled="!accountForm.departmentName"
+              :placeholder="accountForm.departmentName ? '搜索班级，或输入新班级名' : '请先选择所属学院'"
+              @visible-change="handleClassVisible"
+            >
+              <el-option
+                v-for="item in classOptions"
+                :key="item.id ?? item.name"
+                :label="item.name"
+                :value="item.name"
+              >
+                <span>{{ item.name }}</span>
+                <span class="option-meta">{{ item.memberCount }} 人</span>
+              </el-option>
+              <el-option v-if="classCreateName" :label="classCreateName" :value="classCreateName">
+                <span class="option-create">+ 新建班级「{{ classCreateName }}」</span>
+              </el-option>
+            </el-select>
+            <div v-if="classCreateName && accountForm.className === classCreateName" class="field-hint">
+              该班级尚不存在，保存时会自动创建
+            </div>
           </el-form-item>
           <el-form-item v-if="accountForm.role === 'ROLE_STUDENT'" label="年级" prop="grade">
             <el-input-number v-model="accountForm.grade" :min="2000" :max="2100" controls-position="right" />
@@ -360,48 +418,94 @@ const importing = ref(false)
 const importRoleLabel = computed(() => importRole.value === 'ROLE_TEACHER' ? '教师账号' : '学生账号')
 const importTemplateHint = computed(() => importRole.value === 'ROLE_TEACHER'
   ? '教师模板直接填写工号、姓名和学院名称；专业、班级、年级请留空。新学院会自动创建，初始密码留空时为 ABC+工号。'
-  : '学生模板直接填写学号、姓名、学院名称、专业名称、班级号和年级。不存在的学院、专业或班级会自动创建，初始密码留空时为 ABC+学号。')
+  : '学生模板直接填写学号、姓名、学院名称、专业名称、班级名称和年级（如 24莞信管01班）。不存在的学院、专业或班级会自动创建，初始密码留空时为 ABC+学号。')
 const accountForm = reactive({
   role: 'ROLE_STUDENT',
   username: '',
   name: '',
-  departmentId: null,
-  majorId: null,
-  classNumber: null,
+  departmentName: '',
+  majorName: '',
+  className: '',
   grade: null
 })
 const accountRules = {
   role: [{ required: true, message: '请选择角色', trigger: 'change' }],
   username: [{ required: true, message: '请输入工号或学号', trigger: 'blur' }],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
-  departmentId: [{ required: true, message: '请选择所属学院', trigger: 'change' }],
-  majorId: [{ required: true, message: '请选择专业', trigger: 'change' }],
-  classNumber: [
-    { required: true, message: '请输入学院内的班级号', trigger: 'change' },
-    {
-      validator: (_rule, value, callback) => {
-        if (!Number.isInteger(value) || value < 1 || value > 9999) {
-          callback(new Error('班级号必须是 1~9999 的整数'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change'
-    }
+  departmentName: [
+    { required: true, message: '请选择或输入学院', trigger: 'change' },
+    { max: 100, message: '学院名称不能超过 100 个字符', trigger: 'change' }
+  ],
+  majorName: [
+    { required: true, message: '请选择或输入专业', trigger: 'change' },
+    { max: 100, message: '专业名称不能超过 100 个字符', trigger: 'change' }
+  ],
+  className: [
+    { required: true, message: '请选择或输入班级', trigger: 'change' },
+    { max: 100, message: '班级名称不能超过 100 个字符', trigger: 'change' }
   ],
   grade: [{ required: true, message: '请选择年级', trigger: 'change' }]
 }
 
-function classNumberFromName(name) {
-  const value = Number(name)
-  return Number.isInteger(value) && value >= 1 && value <= 9999 ? value : null
+const departments = computed(() => Array.isArray(overview.value.departments) ? overview.value.departments : [])
+const selectedDepartment = computed(() => departments.value.find((item) => item.name === accountForm.departmentName))
+const availableMajors = computed(() => Array.isArray(selectedDepartment.value?.majors) ? selectedDepartment.value.majors : [])
+const availableClasses = computed(() => Array.isArray(selectedDepartment.value?.classes) ? selectedDepartment.value.classes : [])
+
+// 学院、专业、班级都允许「输入即建」：下拉既能搜已有节点，也能在搜不到时给出一条「+ 新建」候选。
+// 用户必须显式点这一项才会新建，避免把搜索过程中的半截文字直接当成组织建出来。
+function useCreatableOptions(source) {
+  const keyword = ref('')
+  const options = computed(() => {
+    const query = keyword.value.trim().toLowerCase()
+    if (!query) return source.value
+    return source.value.filter((item) => String(item.name).toLowerCase().includes(query))
+  })
+  const createName = computed(() => {
+    const name = keyword.value.trim()
+    if (!name || name.length > 100) return ''
+    return source.value.some((item) => String(item.name) === name) ? '' : name
+  })
+  return {
+    keyword,
+    options,
+    createName,
+    filter: (query) => { keyword.value = query ?? '' },
+    reset: () => { keyword.value = '' }
+  }
 }
 
-const departments = computed(() => Array.isArray(overview.value.departments) ? overview.value.departments : [])
-const availableMajors = computed(() => {
-  const department = departments.value.find((item) => String(item.id) === String(accountForm.departmentId))
-  return Array.isArray(department?.majors) ? department.majors : []
-})
+const departmentField = useCreatableOptions(departments)
+const majorField = useCreatableOptions(availableMajors)
+const classField = useCreatableOptions(availableClasses)
+const { options: departmentOptions, createName: departmentCreateName } = departmentField
+const { options: majorOptions, createName: majorCreateName } = majorField
+const { options: classOptions, createName: classCreateName } = classField
+
+function filterDepartments(query) {
+  departmentField.filter(query)
+}
+
+function filterMajors(query) {
+  majorField.filter(query)
+}
+
+function filterClasses(query) {
+  classField.filter(query)
+}
+
+function handleDepartmentVisible(visible) {
+  if (visible) departmentField.reset()
+}
+
+function handleMajorVisible(visible) {
+  if (visible) majorField.reset()
+}
+
+function handleClassVisible(visible) {
+  if (visible) classField.reset()
+}
+
 const organizationMetrics = computed(() => {
   const summary = overview.value.summary || overview.value
   return [
@@ -412,35 +516,62 @@ const organizationMetrics = computed(() => {
   ]
 })
 
-const organizationRows = computed(() => departments.value.map((department, departmentIndex) => ({
-  treeKey: `department-${department.id ?? departmentIndex}`,
-  id: department.id,
-  type: 'department',
-  name: department.name,
-  code: department.code,
-  typeLabel: '院系',
-  memberCount: organizationMemberCount(department),
-  children: [
-    ...(department.majors || []).map((major, majorIndex) => ({
-      treeKey: `major-${major.id ?? `${departmentIndex}-${majorIndex}`}`,
+// 组织树按「院系 › 专业 › 班级」三级展示。班级在库里只归属学院（V6 起 major_id 可为空），
+// 后端会按在册学生的专业推断 majorId；推断不出来的班（没有学生、或学生都没填专业）收进「未分配专业」分组，
+// 不会因为挂不上专业而从树上消失。
+const sameId = (left, right) => left != null && right != null && String(left) === String(right)
+
+const classRow = (classItem, keyPrefix) => ({
+  treeKey: `${keyPrefix}-class-${classItem.id ?? keyPrefix}`,
+  id: classItem.id,
+  type: 'class',
+  name: classItem.name,
+  code: classItem.code,
+  typeLabel: '班级',
+  memberCount: organizationMemberCount(classItem)
+})
+
+const organizationRows = computed(() => departments.value.map((department, departmentIndex) => {
+  const classList = Array.isArray(department.classes) ? department.classes : []
+  const majorRows = (department.majors || []).map((major, majorIndex) => {
+    const key = `major-${major.id ?? `${departmentIndex}-${majorIndex}`}`
+    return {
+      treeKey: key,
       id: major.id,
       type: 'major',
       name: major.name,
       code: major.code,
       typeLabel: '专业',
-      memberCount: organizationMemberCount(major)
-    })),
-    ...(department.classes || []).map((classItem, classIndex) => ({
-      treeKey: `class-${classItem.id ?? `${departmentIndex}-${classIndex}`}`,
-      id: classItem.id,
-      type: 'class',
-      name: classItem.name,
-      code: classItem.code,
-      typeLabel: '班级',
-      memberCount: organizationMemberCount(classItem)
-    }))
-  ]
-})))
+      memberCount: organizationMemberCount(major),
+      children: classList.filter((classItem) => sameId(classItem.majorId, major.id)).map((classItem) => classRow(classItem, key))
+    }
+  })
+  // 只有挂不到任何专业下的班级才需要这个兜底分组；正常情况不出现。
+  const orphans = classList.filter((classItem) => !majorRows.some((major) => sameId(classItem.majorId, major.id)))
+  const grouped = [...majorRows]
+  if (orphans.length) {
+    grouped.push({
+      treeKey: `unassigned-${department.id ?? departmentIndex}`,
+      id: null,
+      type: 'unassigned',
+      name: '未分配专业',
+      code: null,
+      typeLabel: '分组',
+      memberCount: orphans.reduce((sum, classItem) => sum + organizationMemberCount(classItem), 0),
+      children: orphans.map((classItem) => classRow(classItem, `unassigned-${department.id ?? departmentIndex}`))
+    })
+  }
+  return {
+    treeKey: `department-${department.id ?? departmentIndex}`,
+    id: department.id,
+    type: 'department',
+    name: department.name,
+    code: department.code,
+    typeLabel: '院系',
+    memberCount: organizationMemberCount(department),
+    children: grouped
+  }
+}))
 
 async function loadOverview() {
   overviewLoading.value = true
@@ -498,11 +629,14 @@ function resetAccountForm() {
     role: 'ROLE_STUDENT',
     username: '',
     name: '',
-    departmentId: null,
-    majorId: null,
-    classNumber: null,
+    departmentName: '',
+    majorName: '',
+    className: '',
     grade: null
   })
+  departmentField.reset()
+  majorField.reset()
+  classField.reset()
   accountFormRef.value?.clearValidate()
 }
 
@@ -518,22 +652,28 @@ function openEdit(row) {
     role: normalizeRole(row.role),
     username: row.username,
     name: row.name || row.realName || '',
-    departmentId: row.departmentId ?? null,
-    majorId: row.majorId ?? null,
-    classNumber: classNumberFromName(row.className),
+    departmentName: row.departmentName || '',
+    majorName: row.majorName || '',
+    className: row.className || '',
     grade: row.grade ?? null
   })
+  departmentField.reset()
+  majorField.reset()
+  classField.reset()
   accountDialogVisible.value = true
 }
 
 function clearOrganizationSelection() {
-  accountForm.departmentId = null
+  accountForm.departmentName = ''
+  departmentField.reset()
   clearMajorAndClass()
 }
 
 function clearMajorAndClass() {
-  accountForm.majorId = null
-  accountForm.classNumber = null
+  accountForm.majorName = ''
+  accountForm.className = ''
+  majorField.reset()
+  classField.reset()
 }
 
 async function saveAccount() {
@@ -545,9 +685,9 @@ async function saveAccount() {
     const payload = {
       role: accountForm.role,
       displayName: accountForm.name,
-      departmentId: accountForm.departmentId,
-      majorId: isStudent ? accountForm.majorId : null,
-      classNumber: isStudent ? accountForm.classNumber : null,
+      departmentName: String(accountForm.departmentName || '').trim(),
+      majorName: isStudent ? String(accountForm.majorName || '').trim() : null,
+      className: isStudent ? String(accountForm.className || '').trim() : null,
       grade: isStudent ? accountForm.grade : null
     }
     let created = null
@@ -615,7 +755,7 @@ function downloadImportTemplate() {
   const header = 'role,username,displayName,department,major,class,grade,initialPassword'
   const examples = importRole.value === 'ROLE_TEACHER'
     ? ['ROLE_TEACHER,T2026001,示例教师,生物医学工程学院,,,,']
-    : ['ROLE_STUDENT,20260101,示例学生,生物医学工程学院,智能科学与技术,1,2026,']
+    : ['ROLE_STUDENT,20260101,示例学生,生物医学工程学院,智能科学与技术,24莞信科01班,2026,']
   const blob = new Blob([`\uFEFF${header}\r\n${examples.join('\r\n')}\r\n`], {
     type: 'text/csv;charset=utf-8'
   })
@@ -765,6 +905,25 @@ onMounted(reloadAll)
 
 .form-grid :deep(.el-input-number) {
   width: 100%;
+}
+
+.option-meta {
+  float: right;
+  margin-left: 12px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.option-create {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.field-hint {
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .dialog-alert {

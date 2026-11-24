@@ -2549,7 +2549,7 @@
           "classId": {
             "type": "integer",
             "format": "int64",
-            "description": "兼容字段：必须属于所选学院。与 classNumber 二选一，同时提供时以 classNumber 为准"
+            "description": "兼容字段：必须属于所选学院。与 className 二选一，同时提供时以 className 为准"
           },
           "grade": {
             "type": "integer",
@@ -2557,12 +2557,20 @@
             "maximum": 2100,
             "minimum": 2000
           },
-          "classNumber": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 9999,
-            "minimum": 1,
-            "description": "学院维度统一编号的班级号，与 majorId 无关；服务端按 (departmentId, classNumber) 复用或自动创建班级，不设固定数量上限"
+          "className": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "班级名称，学院内唯一（如 24莞信管01班）；服务端按 (departmentId, className) 复用或自动创建班级。旧字段 classNumber 作为别名兼容"
+          },
+          "departmentName": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "学院名称，不存在时自动创建；与 departmentId 二选一，同时提供时以名称为准"
+          },
+          "majorName": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "专业名称，学院内唯一，不存在时自动创建在该学院下；与 majorId 二选一，同时提供时以名称为准"
           }
         },
         "required": [
@@ -3067,7 +3075,7 @@
           "classId": {
             "type": "integer",
             "format": "int64",
-            "description": "兼容字段：CSV 导入与旧客户端使用，必须属于所选学院。与 classNumber 二选一，同时提供时以 classNumber 为准"
+            "description": "兼容字段：CSV 导入与旧客户端使用，必须属于所选学院。与 className 二选一，同时提供时以 className 为准"
           },
           "grade": {
             "type": "integer",
@@ -3075,12 +3083,20 @@
             "maximum": 2100,
             "minimum": 2000
           },
-          "classNumber": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 9999,
-            "minimum": 1,
-            "description": "学院维度统一编号的班级号，与 majorId 无关；服务端按 (departmentId, classNumber) 复用或自动创建班级，不设固定数量上限"
+          "className": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "班级名称，学院内唯一（如 24莞信管01班）；服务端按 (departmentId, className) 复用或自动创建班级。旧字段 classNumber 作为别名兼容"
+          },
+          "departmentName": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "学院名称，不存在时自动创建；与 departmentId 二选一，同时提供时以名称为准"
+          },
+          "majorName": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "专业名称，学院内唯一，不存在时自动创建在该学院下；与 majorId 二选一，同时提供时以名称为准"
           }
         },
         "required": [

@@ -213,7 +213,7 @@ Authorization: Bearer <accessToken>
 
 组织概况包含 `departmentCount`、`majorCount`、`classCount`、`activeTeacherCount`、`activeStudentCount`、`accountCount` 和：
 
-班级按**学院维度统一编号**。`departments[].majors` 与 `departments[].classes` 是同一学院下两个并列维度，班级不再挂在专业下；`classes[].name` 为学院内的班级号（如 `"7"`），同号班级在学院内唯一，不同专业的学生可以属于同一班号。院系、专业、班级均返回实时 `memberCount`（未注销的教师/学生人数），前端据此只对 `memberCount=0` 的节点提供删除入口。
+班级按**学院维度统一编号**，本身不强制归属专业：`classes[].majorId` 优先取 `class.major_id`，为空时由该班在册学生人数最多的专业推断，推断不到返回 `null`（班内没有学生，或学生都没填专业）。同号班级在学院内唯一，不同专业的学生可以属于同一班号。前端以 `majorId` 把班级渲染成「院系 › 专业 › 班级」三级树，`majorId=null` 的班级收进该学院下的「未分配专业」分组，不会从树上消失。院系、专业、班级均返回实时 `memberCount`（未注销的教师/学生人数），前端据此只对 `memberCount=0` 的节点提供删除入口。
 
 ```json
 {
@@ -227,8 +227,8 @@ Authorization: Bearer <accessToken>
         {"id": 2, "departmentId": 1, "name": "临床医学", "status": 1, "memberCount": 5}
       ],
       "classes": [
-        {"id": 3, "departmentId": 1, "name": "1", "grade": null, "status": 1, "memberCount": 0},
-        {"id": 4, "departmentId": 1, "name": "7", "grade": null, "status": 1, "memberCount": 7}
+        {"id": 3, "departmentId": 1, "name": "1", "grade": null, "status": 1, "memberCount": 0, "majorId": null},
+        {"id": 4, "departmentId": 1, "name": "7", "grade": null, "status": 1, "memberCount": 7, "majorId": 2}
       ]
     }
   ]
@@ -253,18 +253,20 @@ Authorization: Bearer <accessToken>
   "username": "20240101",
   "displayName": "李同学",
   "initialPassword": "Student2026",
-  "departmentId": 1,
-  "majorId": 2,
-  "classNumber": 7,
+  "departmentName": "生物医学工程学院",
+  "majorName": "智能科学与技术",
+  "className": "24莞信科01班",
   "grade": 2024
 }
 ```
 
-`classNumber` 是**学院维度**的班级号（1–9999 的整数），与 `majorId` 互相独立：同号班级在该学院下唯一，不同专业的学生可以属于同一班号。服务端按 `(departmentId, classNumber)` 复用已有班级，不存在时自动创建并启用，因此班级号不预设上限、不固定在 1~30。`classId` 仍保留用于 CSV 导入与旧客户端；两者二选一，同时提供时以 `classNumber` 为准，且 `classId` 必须属于所选学院。
+学院、专业、班级三个组织维度都支持**按名称**提交：`departmentName`、`majorName`、`className`（各最长 100 字符），服务端 `trim` 后按名称复用，不存在时自动创建并启用，因此管理员录入账号时可以直接把新学院、新专业、新班级敲进去，不需要先去组织树建档。三者仍保留 `departmentId`/`majorId`/`classId` 供 CSV 导入与旧客户端使用，**名称与 ID 同时提供时以名称为准**；使用 ID 时会校验其归属与启用状态。
+
+`className` 是**学院维度**的班级名称（如 `24莞信管01班`），与 `majorName` 互相独立：名称在该学院下唯一，不存在「班级号」概念，不同专业的学生也可以属于同一个班级。班级不写 `major_id`，组织树中的专业归属按在册学生的专业推断（无学生的班级会落在「未分配专业」分组）。旧客户端传 `classNumber` 时按 `className` 的别名处理（`7` 等价于 `"7"`）。
 
 - 管理员创建接口仅接受教师和学生角色，登录账号在所有角色之间必须唯一。
-- 教师必须填写姓名、工号和所属学院，不得携带专业、班级、班级号或年级。
-- 学生必须填写姓名、学号、所属学院、专业、班级号和年级；专业必须属于所选学院，班级号必须是 1–9999 的整数，相关学院、专业、班级均须处于启用状态。
+- 教师必须填写姓名、工号和所属学院，不得携带专业、班级或年级。
+- 学生必须填写姓名、学号、所属学院、专业、班级名称和年级；名称不得为空白，相关学院、专业、班级均须处于启用状态。
 - 工号/学号最长 20；年级范围为 2000–2100。未提供初始密码时使用 `ABC` 加登录账号，首次登录必须修改。
 - 登录账号不能以 `#` 开头；`#<id>` 是已注销账号的保留占位名。
 
@@ -287,15 +289,15 @@ Authorization: Bearer <accessToken>
 - 省略或留空密码时，初始密码为 `ABC` 加清理后的登录账号，例如账号 `20260101` 对应 `ABC20260101`。成功响应为 `{username,role,temporaryPassword,mustChangePassword:true}`；初始密码不得写入前端日志。
 - `role` 仅接受教师或学生。
 
-更新请求不允许改用户名和角色，只用 `role` 定位物理表；班级同样使用学院维度的 `classNumber`：
+更新请求不允许改用户名和角色，只用 `role` 定位物理表；组织维度同样按名称提交，名称不存在时自动创建：
 
 ```json
 {
   "role": "STUDENT",
   "displayName": "李同学",
-  "departmentId": 1,
-  "majorId": 2,
-  "classNumber": 7,
+  "departmentName": "生物医学工程学院",
+  "majorName": "智能科学与技术",
+  "className": "24莞信科01班",
   "grade": 2024
 }
 ```
@@ -314,7 +316,7 @@ CSV 导入要求 UTF-8、`.csv`、不超过 2 MB、最多 5000 条数据，表�
 role,username,displayName,department,major,class,grade,initialPassword
 ```
 
-`department`、`major`、`class` 直接填写学院名称、专业名称和班级号，不填写数据库 ID。班级号按学院统一编号，与 `major` 无关；导入按 `(学院, 班号)` 复用班级，不存在的班号自动在该学院下创建并启用。教师行只填写 `department`，学生行还必须填写 `major`、`class` 和 `grade`。`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
+`department`、`major`、`class` 直接填写学院名称、专业名称和班级名称（如 `24莞信管01班`），不填写数据库 ID。班级按学院唯一，与 `major` 无关；导入按 `(学院, 班级名称)` 复用班级，不存在的班级自动在该学院下创建并启用。教师行只填写 `department`，学生行还必须填写 `major`、`class` 和 `grade`。`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
 
 ### 4.4 课程、模型、运行、异常与审计
 
@@ -726,7 +728,7 @@ Java 保存的 `explanation` JSON 字段为：`ruleVersion`、`branch`（`LOW_CO
 
 为避免前端误判，当前 Java Controller 没有：
 
-- 管理员增删改院系、专业、班级或课程的独立接口；管理员教学数据页是只读。班级号可在创建/编辑学生账号或 CSV 导入时按学院自动创建，不走独立 CRUD。
+- 管理员增删改院系、专业、班级或课程的独立接口；管理员教学数据页是只读。院系、专业、班级都可在创建/编辑账号或 CSV 导入时按名称自动创建，不走独立 CRUD。
 - 文件内联预览和删除接口；受鉴权的附件下载已经实现。
 - 教师/学生专用工作台聚合接口。
 - 作业结束/归档、申诉转 `PROCESSING/CANCELLED` 或学生撤销申诉的接口。

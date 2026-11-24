@@ -121,16 +121,16 @@ public class AdminService {
         // '#<id>' is reserved for tombstones of logically deleted accounts.
         require(!username.startsWith("#"), HttpStatus.BAD_REQUEST, "登录账号不能以 # 开头");
         require(mapper.accountUsernameCount(username) == 0, HttpStatus.CONFLICT, "登录账号已被使用");
-        Long classId = validateOrganization(role, request.departmentId(), request.majorId(), request.classId(),
-                request.classNumber(), request.grade());
+        ResolvedOrganization organization = validateOrganization(role, request.departmentId(), request.departmentName(),
+                request.majorId(), request.majorName(), request.classId(), request.className(), request.grade());
         String temporaryPassword = request.initialPassword() == null || request.initialPassword().isBlank()
                 ? generatedPassword(username) : request.initialPassword();
         String hash = passwordEncoder.encode(temporaryPassword);
         try {
             switch (role) {
-                case TEACHER -> mapper.insertTeacher(username, hash, request.displayName().trim(), request.departmentId());
+                case TEACHER -> mapper.insertTeacher(username, hash, request.displayName().trim(), organization.departmentId());
                 case STUDENT -> mapper.insertStudent(username, hash, request.displayName().trim(),
-                        request.majorId(), classId, request.grade());
+                        organization.majorId(), organization.classId(), request.grade());
                 default -> throw new BusinessException(HttpStatus.BAD_REQUEST, "不支持的账号角色");
             }
         } catch (DuplicateKeyException ex) {
@@ -146,12 +146,13 @@ public class AdminService {
     public void updateAccount(UserPrincipal admin, long id, AccountUpdateRequest request) {
         Role role = Role.parse(request.role());
         require(role == Role.TEACHER || role == Role.STUDENT, HttpStatus.BAD_REQUEST, "只允许维护教师或学生账号");
-        Long classId = validateOrganization(role, request.departmentId(), request.majorId(), request.classId(),
-                request.classNumber(), request.grade());
+        ResolvedOrganization organization = validateOrganization(role, request.departmentId(), request.departmentName(),
+                request.majorId(), request.majorName(), request.classId(), request.className(), request.grade());
         int changed = switch (role) {
             case ADMIN -> mapper.updateAdmin(id, request.displayName().trim());
-            case TEACHER -> mapper.updateTeacher(id, request.displayName().trim(), request.departmentId());
-            case STUDENT -> mapper.updateStudent(id, request.displayName().trim(), request.majorId(), classId, request.grade());
+            case TEACHER -> mapper.updateTeacher(id, request.displayName().trim(), organization.departmentId());
+            case STUDENT -> mapper.updateStudent(id, request.displayName().trim(), organization.majorId(),
+                    organization.classId(), request.grade());
         };
         requireOne(changed, "账号不存在");
         auditService.record(admin, "ACCOUNT_UPDATED", "ACCOUNT", role + ":" + id, Map.of("role", role.name()));
@@ -482,35 +483,77 @@ public class AdminService {
     }
 
     /**
-     * Class numbers are numbered once per department; a student's major and
-     * class are independent dimensions under the same department. Returns the
-     * resolved class id so that the caller never writes an unverified id.
+     * Organization nodes are addressed by name when the admin types a new one
+     * (department, major and class are all created on demand), and by id when
+     * an import or an older client sends one. A name always wins over an id.
+     * Returns the resolved class id so that the caller never writes an
+     * unverified id.
      */
-    private Long validateOrganization(Role role, Long departmentId, Long majorId, Long classId,
-                                      Integer classNumber, Integer grade) {
-        require(departmentId != null, HttpStatus.BAD_REQUEST, role == Role.TEACHER ? "教师所属学院不能为空" : "学生所属学院不能为空");
-        require(mapper.activeDepartment(departmentId) == 1, HttpStatus.BAD_REQUEST, "所属学院不存在或已停用");
+    private ResolvedOrganization validateOrganization(Role role, Long departmentId, String departmentName,
+                                                      Long majorId, String majorName, Long classId, String className,
+                                                      Integer grade) {
+        Long resolvedDepartmentId = resolveDepartmentId(role, departmentId, departmentName);
         if (role == Role.TEACHER) {
-            require(majorId == null && classId == null && classNumber == null && grade == null,
+            require(majorId == null && isBlank(majorName) && classId == null && isBlank(className) && grade == null,
                     HttpStatus.BAD_REQUEST, "教师账号不能设置专业、班级或年级");
-            return null;
+            return new ResolvedOrganization(resolvedDepartmentId, null, null);
         }
-        require(majorId != null, HttpStatus.BAD_REQUEST, "学生专业不能为空");
         require(grade != null && grade >= 2000 && grade <= 2100, HttpStatus.BAD_REQUEST, "学生年级必须在2000至2100之间");
-        require(mapper.activeMajorInDepartment(majorId, departmentId) == 1, HttpStatus.BAD_REQUEST, "专业不属于所选学院或已停用");
-        return resolveClassId(departmentId, classId, classNumber);
+        // Resolving the major also creates it under the selected department; the
+        // class itself stays department-scoped, so no major id is written to it.
+        Long resolvedMajorId = resolveMajorId(resolvedDepartmentId, majorId, majorName);
+        Long resolvedClassId = resolveClassId(resolvedDepartmentId, classId, className);
+        return new ResolvedOrganization(resolvedDepartmentId, resolvedMajorId, resolvedClassId);
     }
 
-    /** Reuse an existing department-scoped class number, or create it on demand. */
-    private Long resolveClassId(Long departmentId, Long classId, Integer classNumber) {
-        require(classId != null || classNumber != null, HttpStatus.BAD_REQUEST, "学生班级不能为空");
-        if (classNumber == null) {
+    /** Reuse an existing department name, or create it on demand. */
+    private Long resolveDepartmentId(Role role, Long departmentId, String departmentName) {
+        String name = trimmed(departmentName);
+        if (name.isEmpty()) {
+            require(departmentId != null, HttpStatus.BAD_REQUEST,
+                    role == Role.TEACHER ? "教师所属学院不能为空" : "学生所属学院不能为空");
+            require(mapper.activeDepartment(departmentId) == 1, HttpStatus.BAD_REQUEST, "所属学院不存在或已停用");
+            return departmentId;
+        }
+        require(name.length() <= 100, HttpStatus.BAD_REQUEST, "学院名称不能超过100个字符");
+        Long resolved = mapper.departmentIdByName(name);
+        if (resolved == null) {
+            mapper.upsertDepartment(name);
+            resolved = mapper.departmentIdByName(name);
+        }
+        require(resolved != null, HttpStatus.CONFLICT, "学院创建失败，请稍后重试");
+        return resolved;
+    }
+
+    /** Reuse an existing department-scoped major name, or create it on demand. */
+    private Long resolveMajorId(Long departmentId, Long majorId, String majorName) {
+        String name = trimmed(majorName);
+        if (name.isEmpty()) {
+            require(majorId != null, HttpStatus.BAD_REQUEST, "学生专业不能为空");
+            require(mapper.activeMajorInDepartment(majorId, departmentId) == 1, HttpStatus.BAD_REQUEST,
+                    "专业不属于所选学院或已停用");
+            return majorId;
+        }
+        require(name.length() <= 100, HttpStatus.BAD_REQUEST, "专业名称不能超过100个字符");
+        Long resolved = mapper.majorIdByName(departmentId, name);
+        if (resolved == null) {
+            mapper.upsertMajor(departmentId, name);
+            resolved = mapper.majorIdByName(departmentId, name);
+        }
+        require(resolved != null, HttpStatus.CONFLICT, "专业创建失败，请稍后重试");
+        return resolved;
+    }
+
+    /** Reuse an existing department-scoped class name, or create it on demand. */
+    private Long resolveClassId(Long departmentId, Long classId, String className) {
+        String name = trimmed(className);
+        require(classId != null || !name.isEmpty(), HttpStatus.BAD_REQUEST, "学生班级不能为空");
+        if (name.isEmpty()) {
             require(mapper.activeClassInDepartment(classId, departmentId) == 1, HttpStatus.BAD_REQUEST,
                     "班级不属于所选学院或已停用");
             return classId;
         }
-        require(classNumber >= 1 && classNumber <= 9999, HttpStatus.BAD_REQUEST, "班级号必须是1至9999之间的整数");
-        String name = String.valueOf(classNumber);
+        require(name.length() <= 100, HttpStatus.BAD_REQUEST, "班级名称不能超过100个字符");
         Long resolved = mapper.classIdByName(departmentId, name);
         if (resolved == null) {
             mapper.upsertClass(departmentId, name);
@@ -520,9 +563,20 @@ public class AdminService {
         return resolved;
     }
 
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String trimmed(String value) {
+        return value == null ? "" : value.trim();
+    }
+
     private String generatedPassword(String username) {
         return "ABC" + username;
     }
 
     private record Page(int number, int size, int offset) { }
+
+    /** Organization ids resolved from names or ids, ready to be written to the account row. */
+    private record ResolvedOrganization(Long departmentId, Long majorId, Long classId) { }
 }

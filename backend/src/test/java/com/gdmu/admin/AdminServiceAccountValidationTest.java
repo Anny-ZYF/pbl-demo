@@ -90,25 +90,27 @@ class AdminServiceAccountValidationTest {
     }
 
     @Test
-    void newDepartmentScopedClassNumberIsCreatedOnDemand() {
+    void newClassNameIsCreatedOnDemand() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(2, 1)).thenReturn(1);
-        when(mapper.classIdByName(1, "31")).thenReturn(null, 77L);
-        var request = new AccountCreateRequest("STUDENT", "S031", "学生", "Student123", 1L, 2L, null, 2026, 31);
+        when(mapper.classIdByName(1, "24莞信管31班")).thenReturn(null, 77L);
+        var request = new AccountCreateRequest("STUDENT", "S031", "学生", "Student123", 1L, 2L, null, 2026,
+                "24莞信管31班");
 
         service.createAccount(admin, request);
 
-        verify(mapper).upsertClass(1L, "31");
+        verify(mapper).upsertClass(1L, "24莞信管31班");
         verify(mapper).insertStudent("S031", "encoded-password", "学生", 2L, 77L, 2026);
         verify(mapper, never()).activeClassInDepartment(anyLong(), anyLong());
     }
 
     @Test
-    void existingClassNumberIsReusedWithoutCreatingAnotherClass() {
+    void classNameIsTrimmedBeforeLookup() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(2, 1)).thenReturn(1);
-        when(mapper.classIdByName(1, "7")).thenReturn(9L);
-        var request = new AccountCreateRequest("STUDENT", "S007", "学生", "Student123", 1L, 2L, null, 2026, 7);
+        when(mapper.classIdByName(1, "24莞信管01班")).thenReturn(9L);
+        var request = new AccountCreateRequest("STUDENT", "S007", "学生", "Student123", 1L, 2L, null, 2026,
+                "  24莞信管01班 ");
 
         service.createAccount(admin, request);
 
@@ -117,11 +119,12 @@ class AdminServiceAccountValidationTest {
     }
 
     @Test
-    void classNumberIsIndependentOfSelectedMajor() {
+    void classNameIsIndependentOfSelectedMajor() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(5, 1)).thenReturn(1);
-        when(mapper.classIdByName(1, "7")).thenReturn(9L);
-        var request = new AccountCreateRequest("STUDENT", "S008", "学生", "Student123", 1L, 5L, null, 2026, 7);
+        when(mapper.classIdByName(1, "24莞信管07班")).thenReturn(9L);
+        var request = new AccountCreateRequest("STUDENT", "S008", "学生", "Student123", 1L, 5L, null, 2026,
+                "24莞信管07班");
 
         service.createAccount(admin, request);
 
@@ -130,9 +133,9 @@ class AdminServiceAccountValidationTest {
     }
 
     @Test
-    void teacherCannotCarryClassNumber() {
+    void teacherCannotCarryClassName() {
         when(mapper.activeDepartment(1)).thenReturn(1);
-        var request = new AccountCreateRequest("TEACHER", "T002", "教师", "Teacher123", 1L, null, null, null, 7);
+        var request = new AccountCreateRequest("TEACHER", "T002", "教师", "Teacher123", 1L, null, null, null, "7");
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.createAccount(admin, request));
 
@@ -141,10 +144,10 @@ class AdminServiceAccountValidationTest {
     }
 
     @Test
-    void studentRequiresEitherClassIdOrClassNumber() {
+    void studentRequiresEitherClassIdOrClassName() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(2, 1)).thenReturn(1);
-        var request = new AccountCreateRequest("STUDENT", "S009", "学生", "Student123", 1L, 2L, null, 2026, null);
+        var request = new AccountCreateRequest("STUDENT", "S009", "学生", "Student123", 1L, 2L, null, 2026, "   ");
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.createAccount(admin, request));
 
@@ -152,43 +155,112 @@ class AdminServiceAccountValidationTest {
     }
 
     @Test
-    void classNumberOutsideRangeIsRejected() {
+    void classNameLongerThanColumnIsRejected() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(2, 1)).thenReturn(1);
-        var request = new AccountCreateRequest("STUDENT", "S010", "学生", "Student123", 1L, 2L, null, 2026, 10000);
+        var request = new AccountCreateRequest("STUDENT", "S010", "学生", "Student123", 1L, 2L, null, 2026,
+                "班".repeat(101));
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.createAccount(admin, request));
 
-        assertEquals("班级号必须是1至9999之间的整数", exception.getMessage());
+        assertEquals("班级名称不能超过100个字符", exception.getMessage());
         verify(mapper, never()).upsertClass(anyLong(), anyString());
     }
 
     @Test
-    void httpRequestBodyDeserializesDepartmentScopedClassNumber() throws Exception {
+    void httpRequestBodyDeserializesClassName() throws Exception {
         String json = """
                 {"role":"STUDENT","username":"S011","displayName":"学生","departmentId":1,
-                 "majorId":2,"classNumber":31,"grade":2026}
+                 "majorId":2,"className":"24莞信管01班","grade":2026}
                 """;
 
         AccountCreateRequest request = new ObjectMapper().readValue(json, AccountCreateRequest.class);
 
-        assertEquals(31, request.classNumber());
+        assertEquals("24莞信管01班", request.className());
         assertEquals(2L, request.majorId());
         assertNull(request.classId());
     }
 
     @Test
-    void updateAccountAlsoResolvesDepartmentScopedClassNumber() {
+    void legacyClassNumberAliasStillDeserializes() throws Exception {
+        String json = """
+                {"role":"STUDENT","username":"S012","displayName":"学生","departmentId":1,
+                 "majorId":2,"classNumber":31,"grade":2026}
+                """;
+
+        AccountCreateRequest request = new ObjectMapper().readValue(json, AccountCreateRequest.class);
+
+        assertEquals("31", request.className());
+    }
+
+    @Test
+    void updateAccountAlsoResolvesClassName() {
         when(mapper.activeDepartment(1)).thenReturn(1);
         when(mapper.activeMajorInDepartment(2, 1)).thenReturn(1);
-        when(mapper.classIdByName(1, "45")).thenReturn(null, 88L);
+        when(mapper.classIdByName(1, "24莞数科45班")).thenReturn(null, 88L);
         when(mapper.updateStudent(anyLong(), anyString(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
-        var request = new AccountUpdateRequest("STUDENT", "学生", 1L, 2L, null, 2026, 45);
+        var request = new AccountUpdateRequest("STUDENT", "学生", 1L, 2L, null, 2026, "24莞数科45班");
 
         service.updateAccount(admin, 12L, request);
 
-        verify(mapper).upsertClass(1L, "45");
+        verify(mapper).upsertClass(1L, "24莞数科45班");
         verify(mapper).updateStudent(12L, "学生", 2L, 88L, 2026);
+    }
+
+    @Test
+    void newDepartmentNameIsCreatedOnDemand() {
+        when(mapper.departmentIdByName("健康医学院")).thenReturn(null, 55L);
+        var request = new AccountCreateRequest("TEACHER", "T021", "教师", "Teacher123", null, null, null, null,
+                null, "健康医学院", null);
+
+        service.createAccount(admin, request);
+
+        verify(mapper).upsertDepartment("健康医学院");
+        verify(mapper, never()).activeDepartment(anyLong());
+        verify(mapper).insertTeacher("T021", "encoded-password", "教师", 55L);
+    }
+
+    @Test
+    void newMajorNameIsCreatedOnDemand() {
+        when(mapper.departmentIdByName("生物医学工程学院")).thenReturn(3L);
+        when(mapper.majorIdByName(3L, "智能医学工程")).thenReturn(null, 66L);
+        when(mapper.classIdByName(3L, "24级智医01班")).thenReturn(null, 77L);
+        var request = new AccountCreateRequest("STUDENT", "S021", "学生", "Student123", null, null, null, 2026,
+                "24级智医01班", "生物医学工程学院", "智能医学工程");
+
+        service.createAccount(admin, request);
+
+        verify(mapper).upsertMajor(3L, "智能医学工程");
+        verify(mapper).upsertClass(3L, "24级智医01班");
+        verify(mapper).insertStudent("S021", "encoded-password", "学生", 66L, 77L, 2026);
+    }
+
+    @Test
+    void organizationNameWinsOverId() {
+        when(mapper.departmentIdByName("信息管理学院")).thenReturn(8L);
+        when(mapper.majorIdByName(8L, "信息管理与信息系统")).thenReturn(9L);
+        when(mapper.classIdByName(8L, "24莞信管01班")).thenReturn(10L);
+        var request = new AccountCreateRequest("STUDENT", "S022", "学生", "Student123", 1L, 2L, 3L, 2026,
+                "24莞信管01班", "信息管理学院", "信息管理与信息系统");
+
+        service.createAccount(admin, request);
+
+        verify(mapper, never()).activeDepartment(anyLong());
+        verify(mapper, never()).activeMajorInDepartment(anyLong(), anyLong());
+        verify(mapper, never()).activeClassInDepartment(anyLong(), anyLong());
+        verify(mapper).insertStudent("S022", "encoded-password", "学生", 9L, 10L, 2026);
+    }
+
+    @Test
+    void majorNameLongerThanColumnIsRejected() {
+        when(mapper.departmentIdByName("信息管理学院")).thenReturn(8L);
+        var request = new AccountCreateRequest("STUDENT", "S023", "学生", "Student123", null, null, null, 2026,
+                null, "信息管理学院", "专".repeat(101));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.createAccount(admin, request));
+
+        assertEquals("专业名称不能超过100个字符", exception.getMessage());
+        verify(mapper, never()).upsertMajor(anyLong(), anyString());
     }
 }
