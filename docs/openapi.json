@@ -96,7 +96,7 @@
           "teacher-scoring-controller"
         ],
         "operationId": "createWorkload",
-        "description": "截止后学生端冻结；教师仍可为本组补录分工版本，该版本会由截止自动锁定，供评分使用。",
+        "description": "运维兜底接口：教师端界面不提供分工修改入口，贡献度由学生组长提交。仅用于某组从未提交分工且已过截止、无法评分的极端情况；生成的版本由截止自动锁定。",
         "parameters": [
           {
             "name": "assignmentId",

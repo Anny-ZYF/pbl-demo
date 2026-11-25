@@ -89,9 +89,9 @@
           :group-id="selected.groupId"
           :parts="parts"
           :members="reviewMembers"
+          :deadline="assignment?.deadline"
           :read-only="Boolean(selected.scorePublished ?? selected.isScorePublished)"
           @status="onWorkloadStatus"
-          @dirty="workloadDirty = $event"
         />
       </div>
 
@@ -164,8 +164,9 @@
           <div class="team-table-head">
             <span>小组</span>
             <span>成员</span>
-            <span>状态</span>
-            <span>操作</span>
+            <span>选题题目</span>
+            <span class="col-center">状态</span>
+            <span class="col-center">操作</span>
           </div>
           <div
             v-for="row in pagedRows"
@@ -173,11 +174,9 @@
             class="team-row"
             :class="{ 'team-row--waiting': !row.submission }"
           >
-            <strong class="cell-group">
-              {{ row.name }}
-              <span v-if="row.leaderName" class="cell-leader"> | {{ row.leaderName }}</span>
-            </strong>
+            <strong class="cell-group" :title="row.name">{{ row.name }}</strong>
             <span class="cell-members" :title="memberText(row)">{{ memberText(row) }}</span>
+            <span class="cell-topic" :title="topicText(row)">{{ topicText(row) }}</span>
             <span class="cell-status">
               <span class="status-chip" :class="`status-chip--${rowState(row)}`">{{ statusText(row) }}</span>
             </span>
@@ -236,7 +235,6 @@ const gradeForm = ref({ groupScore: null, comment: '' })
 const reviewMembers = ref([])
 const membersLoading = ref(false)
 const workloadStatus = ref(null)
-const workloadDirty = ref(false)
 // 自动评分结果提示：保存团队成绩后告诉老师生成了几名学生的个人成绩，或为什么没生成。
 const scoringHint = ref(null)
 // 提交附件功能暂时下线：恢复时取消下面两行注释
@@ -354,10 +352,23 @@ const loadingMembers = ref({})
 const membersOf = (row) => (membersByGroup.value[String(row.id)] ?? [])
   .filter((item) => !item.status || item.status === 'ACTIVE')
 const memberText = (row) => {
-  const names = membersOf(row).map((item) => item.name).filter(Boolean)
+  // 成员接口已按「组长在前」排序，这里给组长名字补一个（组长）标记，组号列只留组号。
+  const names = membersOf(row)
+    .map((item) => {
+      if (!item.name) return ''
+      return item.role === 'LEADER' ? `${item.name}（组长）` : item.name
+    })
+    .filter(Boolean)
   if (names.length) return names.join('、')
   if (loadingMembers.value[String(row.id)]) return '加载中…'
   return row.memberCount ? `${row.memberCount} 人` : '—'
+}
+// 列表里的「选题题目」就是该组最新一次提交的内容（与批改页同一取值口径：content 优先，其次 note）。
+// 列表只给一行，长题目截断，完整内容看 title 提示或点「查看」。
+const topicText = (row) => {
+  const raw = row.submission?.content || row.submission?.note
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim()
+  return text || '—'
 }
 const loadMembers = async (rows) => {
   const targets = rows.filter((row) => row.id != null
@@ -441,13 +452,12 @@ const scoreDirty = computed(() => {
   return currentScore !== savedScore(selected.value)
     || String(gradeForm.value.comment ?? '') !== savedComment(selected.value)
 })
-const isDirty = computed(() => scoreDirty.value || workloadDirty.value)
+const isDirty = computed(() => scoreDirty.value)
 
 const fillReview = async (item) => {
   selected.value = item
   scoringHint.value = null
   workloadStatus.value = null
-  workloadDirty.value = false
   gradeForm.value = { groupScore: savedScore(item), comment: savedComment(item) }
   await loadReviewMembers(item?.groupId)
 }
@@ -520,11 +530,7 @@ const saveGrade = async () => {
     ElMessage.warning('请输入 0-100 的团队成绩')
     return
   }
-  // 分工改过但没保存就录分，评分仍会用旧版本算，这里先拦住。
-  if (workloadDirty.value) {
-    ElMessage.warning('分工有修改尚未保存，请先在分工表里点击「保存分工」')
-    return
-  }
+  // 分工由学生组长维护，教师端只读，录分时不需要再检查分工是否未保存。
   const wasLast = isLastReview.value
   saving.value = true
   try {
@@ -1033,8 +1039,9 @@ onMounted(load)
 .team-table-head,
 .team-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.05fr) minmax(0, 1.7fr) 82px 72px;
-  gap: 16px;
+  /* 组号列只放「第 N 组」，用固定宽度即可；剩下的空间全给成员和选题题目。 */
+  grid-template-columns: 104px minmax(0, 1.5fr) minmax(0, 1.55fr) 82px 72px;
+  gap: 14px;
   align-items: center;
   padding: 13px 22px;
 }
@@ -1064,11 +1071,6 @@ onMounted(load)
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.cell-group .cell-leader {
-  color: #8b99a8;
-  font-size: 12.5px;
-  font-weight: 400;
-}
 .team-row--waiting .cell-group {
   color: #64748b;
   font-weight: 500;
@@ -1084,6 +1086,22 @@ onMounted(load)
 }
 .team-row--waiting .cell-members {
   color: #93a1b1;
+}
+/* 选题题目最长，单行截断，完整内容看悬停提示。 */
+.cell-topic {
+  overflow: hidden;
+  color: #4a5969;
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.team-row--waiting .cell-topic {
+  color: #a7b3c0;
+}
+/* 状态和操作两列的内容居中，表头用同一对齐，否则会出现表头靠左、按钮靠右的错位观感。 */
+.cell-status,
+.col-center {
+  text-align: center;
 }
 .status-chip {
   display: inline-block;
@@ -1105,7 +1123,7 @@ onMounted(load)
   background: #f1f4f8;
 }
 .cell-action {
-  text-align: right;
+  text-align: center;
 }
 .cell-action button {
   padding: 5px 14px;
@@ -1202,7 +1220,9 @@ onMounted(load)
   .list-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
   .list-toolbar input { flex: 1 1 auto; }
   .list-filters { flex-wrap: wrap; }
-  .team-table-head, .team-row { grid-template-columns: minmax(120px, 1fr) minmax(0, 1.2fr) 68px 58px; gap: 10px; padding: 12px 16px; }
+  .team-table-head, .team-row { grid-template-columns: 84px minmax(0, 1.4fr) 66px 56px; gap: 10px; padding: 12px 16px; }
+  /* 窄屏放不下五列，优先保留选题题目，成员名单在「查看」里仍可见。 */
+  .team-table-head > span:nth-child(2), .cell-members { display: none; }
   .cell-action button { padding: 5px 10px; }
 }
 </style>

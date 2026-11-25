@@ -63,6 +63,34 @@ export function buildContributions(parts, members, draft) {
   return result
 }
 
+/** 截止后仍未填写分工时，评分按组内均分兜底，展示也跟着给均分。 */
+export function equalContributionText(memberCount) {
+  const count = Number(memberCount)
+  return Number.isFinite(count) && count > 0 ? `${(100 / count).toFixed(1)}%` : '—'
+}
+
+/**
+ * 贡献度展示文本，三种状态要分清：
+ * - 有分工版本、或学生已经在填：按实际份额实时算，未填满分支加 ≈ 表示还会变；
+ * - 没有版本也没输入、但还没截止：贡献度是「未知」，显示 —（学生还有机会填）；
+ * - 没有版本也没输入、且已过截止：评分会走 equal_split，直接显示均分。
+ */
+export function formatContribution({
+  value,
+  complete = false,
+  hasVersion = false,
+  hasInput = false,
+  deadlinePassed = false,
+  memberCount = 0
+} = {}) {
+  if (!hasVersion && !hasInput) {
+    return deadlinePassed ? equalContributionText(memberCount) : '—'
+  }
+  const numeric = value == null || value === '' ? Number.NaN : Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${complete ? '' : '≈'}${numeric.toFixed(1)}%`
+}
+
 export function buildAllocationPayload(parts, members, draft) {
   return {
     parts: (parts || []).map((part) => ({

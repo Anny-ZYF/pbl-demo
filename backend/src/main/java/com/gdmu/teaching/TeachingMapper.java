@@ -74,6 +74,8 @@ public interface TeachingMapper {
             SELECT s.id AS studentId,s.student_user_id AS studentNo,s.name,
                    m.name AS majorName,c.name AS className,
                    CASE WHEN g.id IS NULL THEN NULL ELSE CONCAT('Team', LPAD(COALESCE(CAST(REGEXP_SUBSTR(g.name, '[0-9]+') AS UNSIGNED), g.id), 2, '0')) END AS groupName,
+                   -- 组长信息只用于成绩查看页的组头展示，不影响任何成绩计算。
+                   CASE WHEN gm.role='LEADER' THEN 1 ELSE 0 END AS isLeader,
                    sr.id AS scoringRunId,sr.status AS runStatus,COALESCE(rev.revised_score, r.final_score, fs.score) AS finalScore,
                    r.rule_score AS ruleScore,r.model_score AS modelScore,r.final_score AS suggestedScore,
                    r.status AS scoringStatus,
@@ -85,8 +87,13 @@ public interface TeachingMapper {
                       JOIN assignment_parts ap ON ap.id=wi.assignment_part_id
                       WHERE ws.assignment_id=#{assignmentId} AND ws.group_id=g.id
                         AND ws.status='LOCKED' AND wi.student_id=s.id),
-                     (SELECT 1.0 / COUNT(*) FROM group_member gm2
-                      WHERE gm2.group_id=g.id AND gm2.status='ACTIVE')) AS contributionRatio,
+                     -- 没有分工版本时不能立刻显示均分：截止前学生还有机会填，贡献度是未知的（NULL -> 前端显示 —）；
+                     -- 只有过了截止仍为空，评分才会走 equal_split，这里才按 1/人数 展示。
+                     (SELECT CASE WHEN a.deadline IS NULL OR a.deadline <= CURRENT_TIMESTAMP
+                                  THEN 1.0 / NULLIF((SELECT COUNT(*) FROM group_member gm2
+                                                     WHERE gm2.group_id=g.id AND gm2.status='ACTIVE'), 0)
+                             END
+                      FROM assignment a WHERE a.id=#{assignmentId})) AS contributionRatio,
                    COALESCE(r.group_score, i.teacher_score,
                      (SELECT sub.teacher_score FROM submission sub
                       WHERE sub.assignment_id=#{assignmentId} AND sub.group_id=g.id

@@ -47,6 +47,7 @@
           <tr class="group-row">
             <td colspan="4">
               <span class="group-label">{{ group.label }}</span>
+              <span v-if="group.leaderName" class="group-leader">组长 {{ group.leaderName }}</span>
               <span class="group-meta">{{ group.members.length }} 人<template v-if="group.groupScore != null"> · 团队 {{ displayScore(group.groupScore) }} 分</template></span>
               <span class="group-status" :class="`group-status--${groupStatusTone(group)}`">{{ groupStatusLabel(group) }}</span>
             </td>
@@ -110,6 +111,7 @@ const groups = computed(() => {
         number: name ? groupNumber({ name }) : null,
         ungrouped: !name,
         members: [],
+        leaderName: '',
         runId: null,
         runStatus: null,
         groupScore: null
@@ -117,6 +119,8 @@ const groups = computed(() => {
       map.set(key, group)
     }
     group.members.push(row)
+    // 组头显示组长姓名；组长被移出小组后就没有这个字段，组头只显示人数。
+    if (Number(row.isLeader) === 1) group.leaderName = row.name || row.studentNo || ''
     if (row.scoringRunId && !group.runId) {
       group.runId = row.scoringRunId
       group.runStatus = row.runStatus
@@ -297,6 +301,7 @@ td small{margin-top:4px;color:#98a5b3;font-size:11px}
 .final-score{color:#356798;font-size:15px;font-weight:600}
 .group-row td{padding:9px 22px;background:#f5f9fd;border-top:1px solid #e3edf6}
 .group-label{margin-right:10px;color:#2f5c85;font-size:13px;font-weight:600}
+.group-leader{margin-right:10px;padding:2px 8px;border-radius:99px;color:#2f5c85;background:#e6eff8;font-size:11px}
 .group-meta{margin-right:10px;color:#8b9aab;font-size:12px}
 .group-status{padding:2px 8px;border-radius:99px;font-size:11px}
 .group-status--published{color:#35845a;background:#e8f6ee}

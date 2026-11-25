@@ -492,7 +492,9 @@ role,username,displayName,department,major,class,grade,initialPassword
 | `GET /teacher/appeals` | 无 | 申诉数组 | 200 |
 | `PUT /teacher/appeals/{appealId}` | `AppealResolveRequest` | `null` | 200 |
 
-团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；保存成功后提交状态为 `GRADED`，**同一请求内立即按分工比例运行一次评分**并返回本次运行信息（`scoringRunId`、`scoringStatus`、`memberCount`），个人成绩随后在「成绩查看」一键发布（发布即采用算法分）。`contributionSource` 为 `workload`（采用最新 `LOCKED` 分工）或 `equal_split`（该组从未保存分工，按组内均分计算）。评分前置条件不满足（例如作业没有评价分支、小组没有有效成员）时不回滚团队成绩，返回 `{scoringSkipped:true,scoringMessage}`，教师补录后再点「重新运行评分」即可。输入不满足评分条件时不会生成已发布的兜底成绩；模型不可用仍通过确定性规则生成待复核运行。
+团队评分：`groupScore` 为 `0..100`，`comment` 最长 2000；保存成功后提交状态为 `GRADED`，**同一请求内立即按分工比例运行一次评分**并返回本次运行信息（`scoringRunId`、`scoringStatus`、`memberCount`），个人成绩随后在「成绩查看」一键发布（发布即采用算法分）。`contributionSource` 为 `workload`（采用最新 `LOCKED` 分工）或 `equal_split`（该组从未保存分工，按组内均分计算）。评分前置条件不满足（例如作业没有评价分支、小组没有有效成员）时不回滚团队成绩，返回 `{scoringSkipped:true,scoringMessage}`；条件补齐后再次保存团队成绩即可重跑。输入不满足评分条件时不会生成已发布的兜底成绩；模型不可用仍通过确定性规则生成待复核运行。
+
+教师端分工接口是**只读 + 运维兜底**：批改页只展示分工矩阵，不提供修改入口，教师不能改动学生贡献度；`PUT` 仅保留给「该组从未提交分工且已过截止」的极端情况，正常教学流程中由学生组长保存。
 
 工作量请求：
 
@@ -516,7 +518,7 @@ role,username,displayName,department,major,class,grade,initialPassword
 
 教师查询工作量返回最新版本摘要 `id/versionNo/status/submittedAt/lockedAt`，以及 `items`（`assignmentPartId/partName/studentId/studentName/share/evidence`）和 `confirmations`（`studentId/studentName/status/comment/confirmedAt`）。查询同样校验作业和团队属于当前教师；尚无版本时返回 404。
 
-发起评分前置条件：已录入团队分、有可用规则、存在已锁定的工作量版本（组长保存或教师补录）。相同输入哈希和模型版本重复运行返回 409。
+发起评分前置条件：已录入团队分、有可用规则、存在已锁定的工作量版本（由组长保存）。相同输入哈希和模型版本重复运行返回 409。
 
 运行详情字段：
 

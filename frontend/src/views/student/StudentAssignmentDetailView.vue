@@ -122,6 +122,7 @@
                 :parts="detail.parts || []"
                 :members="detail.members || []"
                 :is-leader="isLeader"
+                :deadline="detail.deadline"
                 :read-only="workloadReadOnly"
                 :current-student-id="currentStudentId"
                 @status="onWorkloadStatus"

@@ -26,7 +26,8 @@
                 {{ member.name }}
                 <small v-if="member.role === 'LEADER'">组长</small>
               </th>
-              <th scope="col" class="wl-remain-head">剩余可分配</th>
+              <!-- 教师端不参与分配，剩余额度没有意义，只在学生填表时展示 -->
+              <th v-if="!teacherMode" scope="col" class="wl-remain-head">剩余可分配</th>
             </tr>
           </thead>
           <tbody>
@@ -51,7 +52,7 @@
                   @input="onCellInput(row.id, member.studentId, $event)"
                 >
               </td>
-              <td class="wl-remain" :class="remainClass(row)">{{ remainText(row) }}</td>
+              <td v-if="!teacherMode" class="wl-remain" :class="remainClass(row)">{{ remainText(row) }}</td>
             </tr>
           </tbody>
         </table>
@@ -73,7 +74,7 @@
         <div class="wl-actions">
           <span class="wl-hint" :class="hintClass">{{ validationHint }}</span>
           <button v-if="editable" class="wl-primary" :disabled="!canSubmit" @click="submit">
-            {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : (teacherMode ? '保存分工' : '提交分工') }}
+            {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : '提交分工' }}
           </button>
         </div>
       </div>
@@ -82,13 +83,13 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getWorkload, proposeWorkload } from '@/api/student'
-import { getTeacherWorkload, saveTeacherWorkload } from '@/api/teacher'
+import { getTeacherWorkload } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
-import { isAutoLocked } from '@/utils/assignmentWindow'
-import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, cellLimit, clampCellValue } from '@/utils/workload'
+import { isAutoLocked, parseDateValue } from '@/utils/assignmentWindow'
+import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, cellLimit, clampCellValue, formatContribution } from '@/utils/workload'
 
 const props = defineProps({
   assignmentId: { type: [String, Number], required: true },
@@ -98,7 +99,9 @@ const props = defineProps({
   isLeader: { type: Boolean, default: false },
   readOnly: { type: Boolean, default: false },
   currentStudentId: { type: [String, Number], default: null },
-  // 教师端复用同一张表：读教师接口、允许补录，标题和状态文案跟着换。
+  // 作业截止时间：没有分工版本时，截止前贡献度是「未知」，截止后才由评分按均分兜底。
+  deadline: { type: [String, Number, Date], default: null },
+  // 教师端复用同一张表：读教师接口，但始终只读——贡献度只能由学生组长提交。
   teacherMode: { type: Boolean, default: false }
 })
 const emit = defineEmits(['changed', 'status', 'dirty'])
@@ -111,11 +114,10 @@ const saving = ref(false)
 const errorMessage = ref('')
 
 const cardTitle = computed(() => (props.teacherMode ? '小组分工与贡献度' : '小组与工作量分配'))
-// 教师端文案跟着可编辑状态走：成绩发布后是只读的，不能再写「可补录」。
+// 教师端文案不随可编辑状态变化：这张表对教师永远是只读视图。
 const cardHint = computed(() => {
   if (!props.teacherMode) return '按评价分支填写每位成员的工作量份额，每行合计须为 100；超出剩余额度的输入会自动钳位'
-  if (props.readOnly) return '各成员在每个评价分支的工作量份额；成绩已发布，本表仅供查看'
-  return '各成员在每个评价分支的工作量份额，每行合计须为 100；修改后点下方「保存分工」生成新版本'
+  return '各成员在每个评价分支的工作量份额，由学生组长提交，教师不可修改'
 })
 
 const pct = (weight) => `${(Number(weight) * 100).toFixed(0)}%`
@@ -125,6 +127,16 @@ const isMine = (member) => !props.teacherMode && props.currentStudentId != null
 const rows = computed(() => buildRows(props.parts, props.members, draft))
 const allComplete = computed(() => allRowsComplete(rows.value, props.members.length))
 const contributions = computed(() => buildContributions(props.parts, props.members, draft))
+
+// 页面停留跨过截止时间时也要切换文案，所以用一个轻量时钟，而不是只在加载时算一次。
+const now = ref(Date.now())
+const clock = setInterval(() => { now.value = Date.now() }, 30_000)
+onUnmounted(() => clearInterval(clock))
+const deadlinePassed = computed(() => {
+  const end = parseDateValue(props.deadline)
+  return end != null && now.value >= end
+})
+const hasDraftInput = () => Object.values(draft).some((value) => String(value ?? '').trim() !== '')
 
 // 一个分支一行，一行最多 100 个百分点：先填的成员先占额度，后填的只剩「100 − 其他成员合计」。
 const rowOthersTotal = (partId, studentId) => props.members
@@ -157,18 +169,16 @@ const onCellInput = (partId, studentId, event) => {
   if (Number.isFinite(parsed) && parsed > Number(clamped)) flashClamped(key)
 }
 
-// 学生端只有组长能改；教师端只要能补录就能改（成绩发布后冻结）。
-const editable = computed(() => (props.teacherMode
-  ? !props.readOnly
-  : props.isLeader && !props.readOnly))
+// 学生端只有组长能改；教师端始终只读——贡献度只能由学生提交，教师没有任何写入口。
+const editable = computed(() => !props.teacherMode && props.isLeader && !props.readOnly)
 const canSubmit = computed(() => editable.value && allComplete.value && !saving.value && props.groupId != null)
 
 const autoLocked = computed(() => isAutoLocked(workload.value?.autoLocked))
 
 const roleHint = computed(() => {
+  if (props.teacherMode) return '学生提交 · 教师只读'
   if (autoLocked.value) return '截止自动锁定 · 不可编辑'
-  if (props.readOnly) return props.teacherMode ? '成绩已发布 · 只读' : '当前阶段只读'
-  if (props.teacherMode) return editable.value ? '教师补录 · 可编辑' : '只读'
+  if (props.readOnly) return '当前阶段只读'
   if (!props.isLeader) return '由组长填写，仅供查看'
   return editable.value ? '我是组长 · 可编辑' : '已锁定 · 不可编辑'
 })
@@ -177,13 +187,14 @@ const statusBanner = computed(() => {
   const version = workload.value?.versionNo ?? '—'
   if (!workload.value) {
     if (props.teacherMode) {
-      if (props.readOnly) return '该组没有分工版本；成绩已发布，不能再补录'
-      return '该组尚无分工版本，可直接填写各成员份额并保存；未填写时评分按组内均分计算'
+      return deadlinePassed.value
+        ? '该组尚无分工版本，评分按组内均分计算'
+        : '该组尚未填写分工；截止后仍未填写时按组内均分计算'
     }
     return props.isLeader ? '尚无分工方案，请填写各成员份额后保存' : '组长尚未填写工作量分配'
   }
   if (workload.value.status === 'LOCKED') {
-    if (props.teacherMode) return `第 ${version} 版已保存并锁定，评分将采用此版本${editable.value ? '；再次保存会生成新版本' : ''}`
+    if (props.teacherMode) return `第 ${version} 版已保存并锁定，评分将采用此版本`
     return autoLocked.value
       ? `第 ${version} 版已在截止时间自动锁定，评分将采用此版本`
       : `第 ${version} 版已保存，评分将采用此版本${editable.value ? '，可继续修改后另存新版本' : ''}`
@@ -200,11 +211,9 @@ const statusClass = computed(() => ({
 }))
 
 const validationHint = computed(() => {
-  if (!editable.value) {
-    if (props.teacherMode && props.readOnly) return '成绩已发布，不可编辑'
-    return props.readOnly ? '当前阶段不可编辑' : '由组长填写'
-  }
-  if (allComplete.value) return props.teacherMode ? '全部分支合计均为 100，可保存' : '全部分支合计均为 100，可提交'
+  if (props.teacherMode) return '分工由学生组长提交，教师不可修改'
+  if (!editable.value) return props.readOnly ? '当前阶段不可编辑' : '由组长填写'
+  if (allComplete.value) return '全部分支合计均为 100，可提交'
   const over = rows.value.filter((row) => row.remaining < -ROW_TOLERANCE).length
   if (over) return `有 ${over} 个分支超出 100，请调减`
   const pending = rows.value.filter((row) => row.remaining > ROW_TOLERANCE).length
@@ -216,11 +225,14 @@ const hintClass = computed(() => ({
   'wl-hint--over': !allComplete.value && rows.value.some((row) => row.remaining < -ROW_TOLERANCE)
 }))
 
-const contributionText = (member) => {
-  const value = contributions.value[member.studentId]
-  if (!Number.isFinite(value)) return '—'
-  return `${allComplete.value ? '' : '≈'}${value.toFixed(1)}%`
-}
+const contributionText = (member) => formatContribution({
+  value: contributions.value[member.studentId],
+  complete: allComplete.value,
+  hasVersion: Boolean(workload.value),
+  hasInput: hasDraftInput(),
+  deadlinePassed: deadlinePassed.value,
+  memberCount: props.members.length
+})
 const remainText = (row) => Math.abs(row.remaining) < ROW_TOLERANCE
   ? '0 ✓' : String(Math.round(row.remaining * 100) / 100)
 const remainClass = (row) => {
@@ -293,18 +305,13 @@ const submit = async () => {
   saving.value = true
   errorMessage.value = ''
   try {
-    if (props.teacherMode) {
-      await saveTeacherWorkload(props.assignmentId, props.groupId,
-        buildAllocationPayload(props.parts, props.members, draft))
-    } else {
-      await proposeWorkload(props.assignmentId, props.groupId,
-        buildAllocationPayload(props.parts, props.members, draft))
-    }
-    ElMessage.success('分工已保存，评分将采用这一版本')
+    await proposeWorkload(props.assignmentId, props.groupId,
+      buildAllocationPayload(props.parts, props.members, draft))
+    ElMessage.success('分工已提交，评分将采用这一版本')
     await load()
     emit('changed')
   } catch (error) {
-    errorMessage.value = getErrorMessage(error, props.teacherMode ? '补录分工失败' : '分工保存失败')
+    errorMessage.value = getErrorMessage(error, '分工保存失败')
   } finally {
     saving.value = false
   }

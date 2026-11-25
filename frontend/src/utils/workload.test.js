@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey } from './workload'
+import { allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, formatContribution } from './workload'
 
 const parts = [
   { id: 101, name: '数据处理和特征工程', weight: 0.4 },
@@ -93,5 +93,26 @@ describe('buildAllocationPayload', () => {
       expect(part.members.reduce((sum, member) => sum + member.share, 0)).toBeCloseTo(1, 10)
     }
     expect(payload.parts[0].members[0].share).toBeCloseTo(0.6, 10)
+  })
+})
+
+describe('formatContribution', () => {
+  it('shows a dash before the deadline when nothing has been filled in', () => {
+    expect(formatContribution({ memberCount: 4, deadlinePassed: false })).toBe('—')
+  })
+
+  it('falls back to the equal split only after the deadline', () => {
+    expect(formatContribution({ memberCount: 4, deadlinePassed: true })).toBe('25.0%')
+    expect(formatContribution({ memberCount: 3, deadlinePassed: true })).toBe('33.3%')
+    expect(formatContribution({ memberCount: 0, deadlinePassed: true })).toBe('—')
+  })
+
+  it('shows the live value once a version exists or the leader starts typing', () => {
+    expect(formatContribution({ hasVersion: true, value: 30.4, complete: true })).toBe('30.4%')
+    expect(formatContribution({ hasInput: true, value: 30.4, complete: false })).toBe('≈30.4%')
+  })
+
+  it('keeps the dash for a blank cell in a partially filled table', () => {
+    expect(formatContribution({ hasInput: true, value: null, complete: false })).toBe('—')
   })
 })
