@@ -43,24 +43,19 @@
       <template v-else>
         <div class="result-line"><span>共找到 <strong>{{ filteredCourses.length }}</strong> 门课程</span><span v-if="termFilter !== 'all'">{{ termFilter }}</span></div>
         <div v-if="filteredCourses.length" class="course-grid">
-          <article v-for="(course, index) in filteredCourses" :key="course.id" class="course-card" tabindex="0" @click="openCourse(course.id)" @keydown.enter="openCourse(course.id)">
-            <div class="course-cover" :class="`cover-${index % 4}`">
-              <div class="cover-top"><span>{{ course.code || 'COURSE' }}</span><b :class="`status-${courseStatus(course).value}`">{{ courseStatus(course).label }}</b></div>
-              <strong>{{ course.name?.slice(0, 1) || '课' }}</strong>
-              <small>{{ course.term || '学期未设置' }}</small>
-            </div>
+          <article v-for="course in filteredCourses" :key="course.id" class="course-card" tabindex="0" @click="openCourse(course.id)" @keydown.enter="openCourse(course.id)">
+            <div class="course-cover" :class="`cover-${course.id % 4}`"></div>
             <div class="course-body">
-              <div class="course-title"><h2>{{ course.name }}</h2><el-icon><ArrowRight /></el-icon></div>
+              <div class="course-title">
+                <h2>{{ course.name }}</h2>
+                <b class="status-tag" :class="`status-${courseStatus(course).value}`">{{ courseStatus(course).label }}</b>
+              </div>
               <div class="course-meta">
                 <span><el-icon><User /></el-icon>{{ course.teacherName || '教师未设置' }}</span>
                 <span><el-icon><Calendar /></el-icon>{{ formatCourseDates(course) }}</span>
               </div>
               <div class="progress-heading"><span>课程作业进度</span><strong>{{ courseProgress(course.id) }}%</strong></div>
               <div class="progress-track"><i :style="{ width: `${courseProgress(course.id)}%` }"></i></div>
-              <div class="course-footer">
-                <span>{{ completedCount(course.id) }} / {{ assignmentCount(course.id) }} 项作业已完成</span>
-                <button type="button">进入课程</button>
-              </div>
             </div>
           </article>
         </div>
@@ -75,7 +70,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Calendar, Close, Loading, Reading, Search, User, WarningFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, Loading, Reading, Search, User, WarningFilled } from '@element-plus/icons-vue'
 import { getAssignments, getCourses } from '@/api/student'
 import { getErrorMessage } from '@/api/response'
 
@@ -343,66 +338,12 @@ onMounted(loadCourses)
 }
 
 .course-cover {
-  position: relative;
-  height: 132px;
-  padding: 16px 18px;
-  overflow: hidden;
-  color: #fff;
+  height: 60px;
   background: linear-gradient(135deg, #2e78d2, #65a7ed);
-}
-.course-cover::after {
-  position: absolute;
-  right: -22px;
-  bottom: -50px;
-  width: 145px;
-  height: 145px;
-  border: 25px solid rgba(255, 255, 255, 0.12);
-  border-radius: 50%;
-  content: "";
 }
 .cover-1 { background: linear-gradient(135deg, #6b59cf, #9a87e7); }
 .cover-2 { background: linear-gradient(135deg, #238e86, #5bc4b1); }
 .cover-3 { background: linear-gradient(135deg, #d37847, #efa271); }
-
-.cover-top {
-  display: flex;
-  position: relative;
-  z-index: 1;
-  align-items: center;
-  justify-content: space-between;
-}
-.cover-top > span {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-}
-.cover-top b {
-  padding: 4px 8px;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.18);
-  font-size: 10px;
-  font-weight: 500;
-}
-.cover-top .status-ended { background: rgba(40, 48, 61, 0.28); }
-.cover-top .status-upcoming { background: rgba(255, 244, 190, 0.22); }
-
-.course-cover > strong {
-  display: block;
-  position: relative;
-  z-index: 1;
-  margin-top: 17px;
-  font-size: 38px;
-  font-weight: 600;
-  line-height: 1;
-}
-.course-cover > small {
-  display: block;
-  position: relative;
-  z-index: 1;
-  margin-top: 8px;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 11px;
-}
 
 .course-body {
   padding: 18px;
@@ -410,25 +351,29 @@ onMounted(loadCourses)
 .course-title {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 .course-title h2 {
-  min-height: 44px;
+  flex: 1;
+  min-width: 0;
   margin: 0;
   color: #26384e;
   font-size: 16px;
   line-height: 1.4;
 }
-.course-title .el-icon {
+.status-tag {
   flex: 0 0 auto;
-  margin-top: 3px;
-  color: #87a2bf;
-  transition: transform 0.2s;
+  margin-top: 1px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  color: #397bd7;
+  background: #edf5ff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
 }
-.course-card:hover .course-title .el-icon {
-  transform: translateX(3px);
-}
+.status-tag.status-ended { color: #7b8794; background: #f1f3f6; }
+.status-tag.status-upcoming { color: #b07d1a; background: #fdf6e6; }
 
 .course-meta {
   display: grid;
@@ -467,19 +412,6 @@ onMounted(loadCourses)
   transition: width 0.4s;
 }
 
-.course-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 17px;
-  padding-top: 14px;
-  border-top: 1px solid #edf1f5;
-}
-.course-footer span {
-  color: #95a1b0;
-  font-size: 10px;
-}
-.course-footer button,
 .state-block button {
   padding: 7px 12px;
   border: 0;
@@ -556,7 +488,7 @@ onMounted(loadCourses)
   }
   .course-grid { grid-template-columns: 1fr; }
   .courses-panel { padding: 16px; }
-  .course-cover { height: 120px; }
+  .course-cover { height: 52px; padding: 0 16px; }
 }
 
 @media (max-width: 420px) {

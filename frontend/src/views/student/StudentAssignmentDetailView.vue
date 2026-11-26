@@ -47,7 +47,9 @@
             <h2>作业要求</h2>
             <p class="description">{{ detail.description || '暂无详细作业说明' }}</p>
             <div v-if="detail.parts?.length" class="rubric">
-              <h3>评分标准</h3>
+              <div class="rubric-head">
+                <h3>评分标准</h3>
+              </div>
               <ul class="rubric-list">
                 <li v-for="part in detail.parts" :key="part.id">
                   <div class="rubric-top">
@@ -55,14 +57,13 @@
                     <b>{{ pct(part.weight) }}</b>
                   </div>
                   <small v-if="part.description">{{ part.description }}</small>
-                  <i><em :style="{ width: `${Number(part.weight) * 100}%` }"></em></i>
                 </li>
               </ul>
             </div>
             <p v-else class="muted">教师尚未设置评价分支</p>
           </section>
 
-          <div id="section-submit">
+          <div>
             <section v-if="!reviewed && submissionOpen && !detail.groupName" class="card grouping">
               <div class="grouping-head">
                 <div>
@@ -173,7 +174,7 @@
             <div v-if="reviewed" class="grade-scores">
               <span>个人成绩 <b>{{ score(currentScore?.finalScore) }}</b></span>
               <span>团队成绩 <b>{{ score(currentScore?.groupScore) }}</b></span>
-              <button type="button" @click="appealVisible = true">我要申诉</button>
+              <button type="button" @click="appealVisible = true">我要复核</button>
             </div>
             <p>{{ detail.teacherComment || (reviewed ? '教师暂未填写评语' : '成绩尚未发布') }}</p>
           </section>
@@ -207,13 +208,11 @@
               <ul>
                 <li v-for="member in detail.members" :key="member.studentId">
                   <span>
-                    {{ member.name }}（{{ member.studentNo }}）
+                    {{ member.name }}
                     <em v-if="member.role === 'LEADER'">组长</em>
                   </span>
-                  <b>{{ ratioText(member.contributionRatio) }}</b>
                 </li>
               </ul>
-              <p class="muted">贡献值为最新分工版本的加权贡献 C</p>
               <button
                 v-if="!reviewed && submissionOpen && !graded"
                 class="danger-button"
@@ -232,11 +231,11 @@
 
     <div v-if="appealVisible" class="dialog">
       <div>
-        <h2>提交成绩申诉</h2>
-        <textarea v-model="appealReason" placeholder="请填写申诉理由"></textarea>
+        <h2>提交成绩复核</h2>
+        <textarea v-model="appealReason" placeholder="请填写复核理由"></textarea>
         <div class="dialog-actions">
           <button type="button" @click="appealVisible = false">取消</button>
-          <button type="button" :disabled="!appealReason.trim()" @click="submitAppeal">提交申诉</button>
+          <button type="button" :disabled="!appealReason.trim()" @click="submitAppeal">提交复核</button>
         </div>
       </div>
     </div>
@@ -351,19 +350,23 @@ const exactGroupNo = computed(() => isNumericGroupKeyword(groupKeyword.value)
 const steps = computed(() => [
   { key: 'brief', index: '1', label: '作业要求', hint: `${detail.value?.parts?.length || 0} 个评价分支`, target: 'section-brief' },
   { key: 'workload', index: '2', label: '小组分工', hint: workloadHint.value, target: 'section-workload' },
-  { key: 'submit-content', index: '3', label: '作业内容', hint: detail.value?.submitNote || detail.value?.content ? '已填写内容' : '仅组长可编辑', target: 'section-submit' },
-  { key: 'submit', index: '4', label: '确认提交', hint: statusText.value, target: 'section-submit' }
+  { key: 'submit-content', index: '3', label: '作业内容', hint: detail.value?.submitNote || detail.value?.content ? '已填写内容' : '仅组长可编辑', target: 'section-content' },
+  { key: 'submit', index: '4', label: '确认提交', hint: statusText.value, target: 'section-confirm' }
 ])
 
 const score = (value) => value == null ? '—' : Number(value).toFixed(2)
 const pct = (weight) => `${(Number(weight) * 100).toFixed(0)}%`
-const ratioText = (value) => value == null ? '—' : `${Number(value).toFixed(1)}%`
+// 分支权重是固定配比（合计 100%），不代表完成度，所以只做数字展示。
+const totalWeight = computed(() => Math.round((detail.value?.parts || []).reduce((sum, part) => sum + (Number(part.weight) || 0), 0) * 100))
 const formatDate = (value) => value
   ? new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
   : '未设置'
 const goTo = (step) => {
   activeStep.value = step.key
-  document.getElementById(step.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // 「作业内容」对齐卡片顶部；「确认提交」对齐提交按钮，让按钮落在视口下沿。
+  // 已提交态没有按钮组时退回卡片本身，避免点了没反应。
+  const target = document.getElementById(step.target) || document.getElementById('section-content')
+  target?.scrollIntoView({ behavior: 'smooth', block: step.key === 'submit' ? 'end' : 'start' })
 }
 const download = async (file, index) => {
   try { await downloadAuthenticatedFile(file, index) } catch (error) { ElMessage.error(getErrorMessage(error, '文件下载失败')) }
@@ -410,9 +413,9 @@ const submitAppeal = async () => {
   try {
     await appealScore(currentScore.value.scoreResultId, { reason: appealReason.value })
     appealVisible.value = false
-    ElMessage.success('申诉已提交')
+    ElMessage.success('复核已提交')
   } catch (error) {
-    errorMessage.value = getErrorMessage(error, '申诉提交失败')
+    errorMessage.value = getErrorMessage(error, '复核提交失败')
   }
 }
 
@@ -625,6 +628,18 @@ onBeforeUnmount(() => {
 
 .rubric { margin-top: 26px; }
 
+.rubric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.rubric-head h3 { margin: 0; }
+
+.rubric-head span { color: #9aa6b5; font-size: 11px; }
+
 .rubric-list {
   display: grid;
   grid-template-columns: 1fr;
@@ -636,44 +651,40 @@ onBeforeUnmount(() => {
 
 .rubric-list li {
   display: grid;
-  gap: 5px;
-  padding: 9px 0;
+  gap: 4px;
+  padding: 12px 0;
   border-bottom: 1px solid #eef2f8;
 }
 
-.rubric-list li:last-child { border-bottom: 0; }
+.rubric-list li:last-child { border-bottom: 0; padding-bottom: 2px; }
 
 .rubric-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  color: #40556f;
-  font-size: 12px;
+  gap: 12px;
+  color: #364b66;
+  font-size: 13px;
+  font-weight: 500;
 }
 
-.rubric-top b { color: #5279d2; font-size: 13px; }
+.rubric-top b {
+  flex: 0 0 auto;
+  min-width: 46px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  color: #456bb8;
+  background: #eef3fd;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
 
 .rubric-list small {
-  color: #9aa6b5;
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.rubric-list i {
-  display: block;
-  height: 6px;
-  margin-top: 4px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: #edf2f8;
-}
-
-.rubric-list em {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #4f7de3, #83a8f3);
+  color: #98a5b6;
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .muted { margin: 0; color: #9aa6b5; font-size: 12px; }
@@ -744,7 +755,6 @@ onBeforeUnmount(() => {
 }
 
 .team li em { margin-left: 5px; color: #5279d2; font-size: 11px; font-style: normal; }
-.team li b { color: #4575d2; font-size: 12px; font-weight: 500; }
 
 .grouping-head,
 .available-groups article {

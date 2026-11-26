@@ -1,13 +1,11 @@
 <template>
   <div class="scores-page">
-    <div class="breadcrumb"><button type="button" @click="router.push(`/teacher/course/${courseId}/workspace`)">课程首页</button><span>›</span><strong>成绩查看</strong></div>
     <header class="heading">
       <div>
-        <p>SCORE OVERVIEW</p>
         <h1>成绩查看</h1>
         <span>{{ course?.name || '当前课程' }} · 按作业查看学生个人成绩</span>
       </div>
-      <button class="ghost-button" type="button" @click="appealsVisible = true">成绩申诉</button>
+      <button class="ghost-button" type="button" @click="appealsVisible = true">成绩复核</button>
     </header>
     <ScoreAppealsDialog v-model="appealsVisible" :course-id="courseId" @resolved="refreshSelectedAssignment" />
 
@@ -35,26 +33,27 @@
       </div>
 
       <div class="toolbar">
-        <div class="search"><el-icon><Search /></el-icon><input v-model="keyword" placeholder="搜索学生姓名或学号" /></div>
+        <div class="search"><el-icon><Search /></el-icon><input v-model="keyword" placeholder="搜索姓名、学号或班级" /></div>
         <span v-if="keyword" class="filter-hint">{{ filteredGroups.length }} / {{ groups.length }} 个小组</span>
       </div>
 
       <div v-if="loading" class="loading">正在加载成绩…</div>
       <el-empty v-else-if="!filteredGroups.length" :description="keyword ? '没有匹配的学生' : '该作业暂无成绩记录'" />
       <table v-else>
-        <thead><tr><th>学生</th><th>团队成绩</th><th>贡献比例</th><th>个人成绩</th></tr></thead>
+        <thead><tr><th>学生</th><th>学号</th><th>班级</th><th>贡献比例</th><th>个人成绩</th></tr></thead>
         <tbody v-for="group in pageGroups" :key="group.key">
           <tr class="group-row">
-            <td colspan="4">
+            <td colspan="5">
               <span class="group-label">{{ group.label }}</span>
-              <span v-if="group.leaderName" class="group-leader">组长 {{ group.leaderName }}</span>
               <span class="group-meta">{{ group.members.length }} 人<template v-if="group.groupScore != null"> · 团队 {{ displayScore(group.groupScore) }} 分</template></span>
+              <span v-if="groupTopic(group)" class="group-topic" :title="groupTopic(group)">选题：{{ groupTopic(group) }}</span>
               <span class="group-status" :class="`group-status--${groupStatusTone(group)}`">{{ groupStatusLabel(group) }}</span>
             </td>
           </tr>
           <tr v-for="student in group.members" :key="student.studentId">
-            <td><strong>{{ student.name || '未命名' }}</strong><small>{{ student.studentNo }}</small></td>
-            <td>{{ displayScore(student.groupScore) }}</td>
+            <td><span class="member-name"><strong>{{ student.name || '未命名' }}</strong><em v-if="Number(student.isLeader) === 1" class="member-leader">（L）</em></span></td>
+            <td>{{ student.studentNo || '—' }}</td>
+            <td>{{ student.className || '—' }}</td>
             <td>{{ displayRatio(student.contributionRatio) }}</td>
             <td class="final-score">{{ displayScore(student.individualFinalScore) }}</td>
           </tr>
@@ -63,24 +62,21 @@
     </section>
     <el-empty v-else description="当前课程暂无作业" />
 
-    <div v-if="selectedAssignment && groupPageCount > 1" class="pagination-bar">
-      <button type="button" :disabled="page <= 1" @click="page--">上一页</button>
-      <span>第 {{ page }} / {{ groupPageCount }} 页</span>
-      <button type="button" :disabled="page >= groupPageCount" @click="page++">下一页</button>
-    </div>
+    <PaginationBar v-if="selectedAssignment && groupPageCount > 1" v-model:page="page" :page-count="groupPageCount" />
   </div>
 </template>
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElEmpty, ElIcon, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 import ScoreAppealsDialog from '@/components/teacher/ScoreAppealsDialog.vue'
-import { getAssignments, getCourses, getTeacherScores, publishScoringRun } from '@/api/teacher'
+import { getAssignments, getCourses, getSubmissions, getTeacherScores, publishScoringRun } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
 import { groupNumber } from '@/utils/groupSearch'
 
-const route = useRoute(); const router = useRouter(); const courseId = route.params.courseId
+const route = useRoute(); const courseId = route.params.courseId
 const courses = ref([]); const assignments = ref([]); const scores = ref([]); const selectedId = ref(null)
 const keyword = ref(''); const page = ref(1); const loading = ref(false); const publishing = ref(false)
 const publishProgress = ref(''); const errorMessage = ref(''); const appealsVisible = ref(false)
@@ -97,6 +93,25 @@ const groupLabel = (name) => {
   return no == null ? name : `第 ${no} 组`
 }
 
+// 选题题目取自学生提交（content 优先 note）。提交列表按组名里的序号对齐成绩行：
+// 成绩接口把组名规范化成 Team01，提交接口给的是原始「第1组」，序号是两边唯一的共同键。
+const topics = ref(new Map())
+const groupTopic = (group) => group.number == null ? '' : (topics.value.get(group.number) || '')
+const loadTopics = async (assignmentId) => {
+  try {
+    const rows = await getSubmissions(assignmentId)
+    const map = new Map()
+    for (const row of rows) {
+      const text = String(row.content || row.note || '').trim()
+      const no = groupNumber({ name: row.groupName })
+      if (no != null && text) map.set(no, text)
+    }
+    if (selectedId.value === assignmentId) topics.value = map
+  } catch {
+    if (selectedId.value === assignmentId) topics.value = new Map()
+  }
+}
+
 // 组内按贡献比例从高到低，组间按组号升序，未分组永远排在最后。
 const groups = computed(() => {
   const map = new Map()
@@ -111,7 +126,6 @@ const groups = computed(() => {
         number: name ? groupNumber({ name }) : null,
         ungrouped: !name,
         members: [],
-        leaderName: '',
         runId: null,
         runStatus: null,
         groupScore: null
@@ -119,8 +133,6 @@ const groups = computed(() => {
       map.set(key, group)
     }
     group.members.push(row)
-    // 组头显示组长姓名；组长被移出小组后就没有这个字段，组头只显示人数。
-    if (Number(row.isLeader) === 1) group.leaderName = row.name || row.studentNo || ''
     if (row.scoringRunId && !group.runId) {
       group.runId = row.scoringRunId
       group.runStatus = row.runStatus
@@ -142,7 +154,7 @@ const filteredGroups = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   if (!query) return groups.value
   return groups.value
-    .map((group) => ({ ...group, members: group.members.filter((student) => `${student.name || ''} ${student.studentNo || ''}`.toLowerCase().includes(query)) }))
+    .map((group) => ({ ...group, members: group.members.filter((student) => `${student.name || ''} ${student.studentNo || ''} ${student.className || ''}`.toLowerCase().includes(query)) }))
     .filter((group) => group.members.length > 0)
 })
 const groupPageCount = computed(() => Math.max(1, Math.ceil(filteredGroups.value.length / GROUP_PAGE_SIZE)))
@@ -204,9 +216,9 @@ const exportScores = () => {
 
 const selectAssignment = async (id) => {
   if (id == null) return
-  selectedId.value = id; keyword.value = ''; page.value = 1; scores.value = []; loading.value = true; errorMessage.value = ''
+  selectedId.value = id; keyword.value = ''; page.value = 1; scores.value = []; topics.value = new Map(); loading.value = true; errorMessage.value = ''
   try {
-    const result = await getTeacherScores(courseId, id)
+    const [result] = await Promise.all([getTeacherScores(courseId, id), loadTopics(id)])
     if (selectedId.value === id) scores.value = result.map(item => ({ ...item, individualFinalScore: item.individualFinalScore ?? item.finalScore ?? item.suggestedScore ?? item.modelScore ?? item.ruleScore }))
   } catch (error) { if (selectedId.value === id) errorMessage.value = getErrorMessage(error, '成绩加载失败') }
   finally { if (selectedId.value === id) loading.value = false }
@@ -220,7 +232,7 @@ const publishAll = async () => {
   const studentCount = list.reduce((sum, group) => sum + group.members.length, 0)
   try {
     await ElMessageBox.confirm(
-      `将发布 ${list.length} 个小组、共 ${studentCount} 名学生的成绩。发布采用当前算法分，发布后学生即可查看；如需个别调整请走「成绩申诉」。`,
+      `将发布 ${list.length} 个小组、共 ${studentCount} 名学生的成绩。发布采用当前算法分，发布后学生即可查看；如需个别调整请走「成绩复核」。`,
       '发布成绩',
       { confirmButtonText: '确认发布', cancelButtonText: '取消', type: 'warning' }
     )
@@ -260,9 +272,6 @@ onMounted(async () => {
 </script>
 <style scoped>
 .scores-page{max-width:1180px;margin:0 auto}
-.breadcrumb{display:flex;gap:8px;margin-bottom:24px;color:#8795a6;font-size:14px}
-.breadcrumb button{padding:0;border:0;background:none;color:inherit;cursor:pointer}
-.breadcrumb strong{color:#263b53}
 .heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
 .heading p{margin:0 0 7px;color:#6bb58b;font-size:11px;letter-spacing:1.5px}
 .heading h1{margin:0 0 8px;color:#263b53;font-size:30px}
@@ -295,22 +304,22 @@ onMounted(async () => {
 
 table{width:100%;border-collapse:collapse;text-align:left}
 th{padding:13px 22px;color:#8795a6;background:#fafcfd;font-size:12px;font-weight:500;border-top:1px solid #edf1f4}
+th:nth-child(1){width:20%}th:nth-child(2){width:20%}th:nth-child(3){width:30%}th:nth-child(4){width:15%}th:nth-child(5){width:15%}
 td{padding:13px 22px;border-top:1px solid #edf1f4;color:#52657a;font-size:13px}
 td strong,td small{display:block}
 td small{margin-top:4px;color:#98a5b3;font-size:11px}
 .final-score{color:#356798;font-size:15px;font-weight:600}
 .group-row td{padding:9px 22px;background:#f5f9fd;border-top:1px solid #e3edf6}
 .group-label{margin-right:10px;color:#2f5c85;font-size:13px;font-weight:600}
-.group-leader{margin-right:10px;padding:2px 8px;border-radius:99px;color:#2f5c85;background:#e6eff8;font-size:11px}
+.member-name{display:inline-flex;align-items:baseline;gap:2px}
+.member-leader{color:#2f5c85;font-size:11px;font-style:normal}
 .group-meta{margin-right:10px;color:#8b9aab;font-size:12px}
+.group-topic{display:inline-block;max-width:min(520px,52vw);margin-right:10px;overflow:hidden;color:#5b7089;font-size:12px;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .group-status{padding:2px 8px;border-radius:99px;font-size:11px}
 .group-status--published{color:#35845a;background:#e8f6ee}
 .group-status--pending{color:#9b6b29;background:#fff2df}
 .group-status--none{color:#8b9aab;background:#f0f3f6}
 
-.pagination-bar{display:flex;align-items:center;justify-content:center;gap:16px;margin:22px 0 0;color:#718096;font-size:14px}
-.pagination-bar button{min-width:76px;padding:9px 14px;border:1px solid #dce5ec;border-radius:5px;color:#52657a;background:#fff;cursor:pointer}
-.pagination-bar button:disabled{color:#b5c0ca;background:#f5f7f9;cursor:not-allowed}
 @media(max-width:720px){
   .assignment-select{width:100%}
   .bar-spacer{display:none}

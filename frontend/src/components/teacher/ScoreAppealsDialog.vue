@@ -1,16 +1,16 @@
 <template>
-  <el-dialog v-model="visible" title="课程成绩申诉" width="min(720px, 94vw)"
+  <el-dialog v-model="visible" title="课程成绩复核" width="min(720px, 94vw)"
     :close-on-click-modal="false" :close-on-press-escape="!saving" :show-close="!saving" @open="load">
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <p v-if="loading" role="status">正在加载申诉…</p>
-    <el-empty v-else-if="!items.length && !error" description="本课程暂无成绩申诉" />
+    <p v-if="loading" role="status">正在加载复核…</p>
+    <el-empty v-else-if="!items.length && !error" description="本课程暂无成绩复核" />
     <article v-for="item in items" v-else :key="item.id" class="appeal-card">
       <strong>{{ item.assignmentTitle }} · {{ item.studentName }}</strong>
       <p>当前成绩 {{ item.currentScore }}</p>
-      <p>申诉理由：{{ item.reason }}</p>
-      <p v-if="evidenceText(item.evidence)">申诉证据：{{ evidenceText(item.evidence) }}</p>
+      <p>复核理由：{{ item.reason }}</p>
+      <p v-if="evidenceText(item.evidence)">复核证据：{{ evidenceText(item.evidence) }}</p>
       <p v-if="item.resolution">{{ item.status === 'ACCEPTED' ? '已接受' : '已驳回' }}：{{ item.resolution }}</p>
-      <el-button v-if="pending(item.status) && editing?.id !== item.id" @click="edit(item)">处理申诉</el-button>
+      <el-button v-if="pending(item.status) && editing?.id !== item.id" @click="edit(item)">处理复核</el-button>
       <el-form v-if="editing?.id === item.id" label-position="top" novalidate @submit.prevent="save">
         <el-form-item label="处理结论">
           <select v-model="form.status" aria-label="处理结论" :disabled="saving">
@@ -25,7 +25,7 @@
           <el-input v-model="form.resolution" type="textarea" :rows="3" maxlength="2000" :disabled="saving" />
         </el-form-item>
         <el-button :disabled="saving" @click="editing = null">取消处理</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!valid" @click="save">保存申诉结论</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!valid" @click="save">保存复核结论</el-button>
       </el-form>
     </article>
   </el-dialog>
@@ -64,7 +64,7 @@ async function load() {
     items.value = (await getTeacherAppeals()).filter(item => String(item.courseId) === String(props.courseId))
   } catch (err) {
     items.value = []
-    error.value = getErrorMessage(err, '申诉列表加载失败')
+    error.value = getErrorMessage(err, '复核列表加载失败')
   } finally {
     loading.value = false
   }
@@ -83,7 +83,7 @@ async function save() {
     adjustedScore: form.status === 'ACCEPTED' ? form.adjustedScore : null }
   saving.value = true
   try {
-    await ElMessageBox.confirm('处理结论将对该学生可见。确认提交？', '确认处理申诉', {
+    await ElMessageBox.confirm('处理结论将对该学生可见。确认提交？', '确认处理复核', {
       confirmButtonText: '确认处理', cancelButtonText: '取消', type: 'warning'
     })
   } catch {
@@ -93,11 +93,11 @@ async function save() {
   error.value = ''
   try {
     await resolveScoreAppeal(item.id, data)
-    ElMessage.success('申诉结论已保存')
+    ElMessage.success('复核结论已保存')
     await load()
     emit('resolved')
   } catch (err) {
-    error.value = getErrorMessage(err, '保存申诉结论失败')
+    error.value = getErrorMessage(err, '保存复核结论失败')
   } finally {
     saving.value = false
   }

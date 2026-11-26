@@ -26,7 +26,6 @@
                 {{ member.name }}
                 <small v-if="member.role === 'LEADER'">组长</small>
               </th>
-              <!-- 教师端不参与分配，剩余额度没有意义，只在学生填表时展示 -->
               <th v-if="!teacherMode" scope="col" class="wl-remain-head">剩余可分配</th>
             </tr>
           </thead>
@@ -58,25 +57,11 @@
         </table>
       </div>
 
-      <p v-if="workload && editable" class="wl-note">
-        重新保存会生成新版本，旧版本自动作废，评分采用最新版本
-      </p>
-
-      <div class="wl-foot">
-        <div class="wl-contrib">
-          <span class="wl-label">加权贡献 C = Σ（分支权重 W × 本人份额 Q）</span>
-          <div class="wl-contrib-list">
-            <span v-for="member in members" :key="`c-${member.studentId}`">
-              {{ member.name }} <b>{{ contributionText(member) }}</b>
-            </span>
-          </div>
-        </div>
-        <div class="wl-actions">
-          <span class="wl-hint" :class="hintClass">{{ validationHint }}</span>
-          <button v-if="editable" class="wl-primary" :disabled="!canSubmit" @click="submit">
-            {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : '提交分工' }}
-          </button>
-        </div>
+      <div v-if="editable" class="wl-foot">
+        <span class="wl-hint" :class="hintClass">{{ validationHint }}</span>
+        <button class="wl-primary" :disabled="!canSubmit" @click="submit">
+          {{ saving ? '保存中…' : workload ? '保存分工（新版本）' : '保存分工' }}
+        </button>
       </div>
     </template>
   </section>
@@ -89,7 +74,7 @@ import { getWorkload, proposeWorkload } from '@/api/student'
 import { getTeacherWorkload } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
 import { isAutoLocked, parseDateValue } from '@/utils/assignmentWindow'
-import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildContributions, buildRows, cellKey, cellLimit, clampCellValue, formatContribution } from '@/utils/workload'
+import { ROW_TOLERANCE, allRowsComplete, buildAllocationPayload, buildRows, cellKey, cellLimit, clampCellValue } from '@/utils/workload'
 
 const props = defineProps({
   assignmentId: { type: [String, Number], required: true },
@@ -99,9 +84,7 @@ const props = defineProps({
   isLeader: { type: Boolean, default: false },
   readOnly: { type: Boolean, default: false },
   currentStudentId: { type: [String, Number], default: null },
-  // 作业截止时间：没有分工版本时，截止前贡献度是「未知」，截止后才由评分按均分兜底。
   deadline: { type: [String, Number, Date], default: null },
-  // 教师端复用同一张表：读教师接口，但始终只读——贡献度只能由学生组长提交。
   teacherMode: { type: Boolean, default: false }
 })
 const emit = defineEmits(['changed', 'status', 'dirty'])
@@ -114,9 +97,8 @@ const saving = ref(false)
 const errorMessage = ref('')
 
 const cardTitle = computed(() => (props.teacherMode ? '小组分工与贡献度' : '小组与工作量分配'))
-// 教师端文案不随可编辑状态变化：这张表对教师永远是只读视图。
 const cardHint = computed(() => {
-  if (!props.teacherMode) return '按评价分支填写每位成员的工作量份额，每行合计须为 100；超出剩余额度的输入会自动钳位'
+  if (!props.teacherMode) return '按评价分支填写每位成员的工作量份额，每行合计须为 100'
   return '各成员在每个评价分支的工作量份额，由学生组长提交，教师不可修改'
 })
 
@@ -126,9 +108,7 @@ const isMine = (member) => !props.teacherMode && props.currentStudentId != null
 
 const rows = computed(() => buildRows(props.parts, props.members, draft))
 const allComplete = computed(() => allRowsComplete(rows.value, props.members.length))
-const contributions = computed(() => buildContributions(props.parts, props.members, draft))
 
-// 页面停留跨过截止时间时也要切换文案，所以用一个轻量时钟，而不是只在加载时算一次。
 const now = ref(Date.now())
 const clock = setInterval(() => { now.value = Date.now() }, 30_000)
 onUnmounted(() => clearInterval(clock))
@@ -136,7 +116,6 @@ const deadlinePassed = computed(() => {
   const end = parseDateValue(props.deadline)
   return end != null && now.value >= end
 })
-const hasDraftInput = () => Object.values(draft).some((value) => String(value ?? '').trim() !== '')
 
 // 一个分支一行，一行最多 100 个百分点：先填的成员先占额度，后填的只剩「100 − 其他成员合计」。
 const rowOthersTotal = (partId, studentId) => props.members
@@ -195,9 +174,7 @@ const statusBanner = computed(() => {
   }
   if (workload.value.status === 'LOCKED') {
     if (props.teacherMode) return `第 ${version} 版已保存并锁定，评分将采用此版本`
-    return autoLocked.value
-      ? `第 ${version} 版已在截止时间自动锁定，评分将采用此版本`
-      : `第 ${version} 版已保存，评分将采用此版本${editable.value ? '，可继续修改后另存新版本' : ''}`
+    return '工作量分配已保存'
   }
   if (workload.value.status === 'SUPERSEDED') {
     return `第 ${version} 版已被新版本替代`
@@ -225,14 +202,6 @@ const hintClass = computed(() => ({
   'wl-hint--over': !allComplete.value && rows.value.some((row) => row.remaining < -ROW_TOLERANCE)
 }))
 
-const contributionText = (member) => formatContribution({
-  value: contributions.value[member.studentId],
-  complete: allComplete.value,
-  hasVersion: Boolean(workload.value),
-  hasInput: hasDraftInput(),
-  deadlinePassed: deadlinePassed.value,
-  memberCount: props.members.length
-})
 const remainText = (row) => Math.abs(row.remaining) < ROW_TOLERANCE
   ? '0 ✓' : String(Math.round(row.remaining * 100) / 100)
 const remainClass = (row) => {
@@ -505,46 +474,15 @@ watch(isDirty, (value) => emit('dirty', value))
 .wl-remain--pending { color: #c1832f; }
 .wl-remain--over { color: #c0483f; }
 
-.wl-note {
-  margin: 12px 0 0;
-  color: #9aa6b5;
-  font-size: 11px;
-}
-
 .wl-foot {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid #eef2f8;
-}
-
-.wl-label {
-  color: #8795a7;
-  font-size: 11px;
-}
-
-.wl-contrib-list {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-  color: #60738c;
-  font-size: 12px;
-}
-
-.wl-contrib-list b {
-  color: #4575d2;
-  font-weight: 500;
-}
-
-.wl-actions {
-  display: grid;
-  gap: 7px;
-  justify-items: end;
 }
 
 .wl-hint {
@@ -574,6 +512,5 @@ watch(isDirty, (value) => emit('dirty', value))
   .workload-card { padding: 17px; }
   .wl-head { flex-direction: column; }
   .wl-foot { align-items: flex-start; }
-  .wl-actions { justify-items: start; width: 100%; }
 }
 </style>

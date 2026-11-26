@@ -2,13 +2,6 @@
   <div class="grading-page">
     <!-- 批改视图独占整页：列表让位，返回后回到原来的分组列表 -->
     <template v-if="reviewOpen && selected">
-      <div class="breadcrumb">
-        <button type="button" @click="router.push(`/teacher/course/${courseId}/assignments`)">作业管理</button>
-        <span>›</span>
-        <button type="button" @click="attemptClose">查看作业</button>
-        <span>›</span>
-        <strong>批改作业</strong>
-      </div>
       <header class="heading">
         <div>
           <p>CURRENT REVIEW</p>
@@ -123,11 +116,6 @@
     </template>
 
     <template v-else>
-      <div class="breadcrumb">
-        <button type="button" @click="router.push(`/teacher/course/${courseId}/assignments`)">作业管理</button>
-        <span>›</span>
-        <strong>查看作业</strong>
-      </div>
       <header class="heading">
         <div>
           <p>SUBMISSION REVIEW</p>
@@ -143,7 +131,7 @@
         <div><span>团队总数</span><strong>{{ teamRows.length }}</strong></div>
         <div><span>已提交</span><strong>{{ submittedRows.length }}</strong></div>
         <div><span>待批改</span><strong>{{ pendingCount }}</strong></div>
-        <div><span>未提交</span><strong>{{ waitingRows.length }}</strong></div>
+        <div><span>未组队人数</span><strong>{{ ungroupedCount }}</strong></div>
       </div>
 
       <section class="panel">
@@ -207,7 +195,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElEmpty, ElMessage, ElMessageBox } from 'element-plus'
 import WorkloadAllocationPanel from '@/components/workload/WorkloadAllocationPanel.vue'
-import { getAssignments, getAssignmentDetail, getGroupMembers, getGroups, getSubmissions, gradeSubmission } from '@/api/teacher'
+import { getAssignments, getAssignmentDetail, getGroupMembers, getGroups, getStudents, getSubmissions, gradeSubmission } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
 // 提交附件功能暂时下线：恢复时取消下一行注释（模板注释块、附件函数、.attachment-* 样式一并启用）
 // import { attachmentDisplayName, downloadAuthenticatedFile } from '@/utils/downloadFile'
@@ -223,6 +211,7 @@ const assignmentId = route.params.assignmentId
 const assignment = ref(null)
 const groups = ref([])
 const submissions = ref([])
+const students = ref([])
 // 评价分支（含权重）来自作业详情，分工表要用它画出每个分支一行。
 const parts = ref([])
 const loading = ref(false)
@@ -316,6 +305,8 @@ const loadReviewMembers = async (groupId) => {
 }
 
 const pendingCount = computed(() => submissions.value.filter((item) => scoreValue(item) === '待批改').length)
+// 未组队人数按学生算：还没加入本作业任何有效小组的人；已组队但没交作业的仍算「未提交」。
+const ungroupedCount = computed(() => students.value.filter((item) => !Number(item.assignedToGroup)).length)
 
 // 组队情况以小组为准：没提交的小组也要出现在列表里，已提交的排在前面，其余按组号升序。
 const teamRows = computed(() => {
@@ -389,7 +380,6 @@ const loadMembers = async (rows) => {
 }
 
 const submittedRows = computed(() => teamRows.value.filter((row) => row.submission))
-const waitingRows = computed(() => teamRows.value.filter((row) => !row.submission))
 
 const keyword = ref('')
 const statusFilter = ref('all')
@@ -575,16 +565,18 @@ const saveGrade = async () => {
 const load = async () => {
   loading.value = true
   try {
-    const [assignments, detail, groupRows, submissionRows] = await Promise.all([
+    const [assignments, detail, groupRows, submissionRows, studentRows] = await Promise.all([
       getAssignments(courseId),
       getAssignmentDetail(assignmentId),
       getGroups(assignmentId),
-      getSubmissions(assignmentId)
+      getSubmissions(assignmentId),
+      getStudents(courseId, assignmentId)
     ])
     assignment.value = assignments.find((item) => String(item.id) === String(assignmentId)) || detail
     parts.value = Array.isArray(detail?.parts) ? detail.parts : []
     groups.value = Array.isArray(groupRows) ? groupRows : []
     submissions.value = Array.isArray(submissionRows) ? submissionRows : []
+    students.value = Array.isArray(studentRows) ? studentRows : []
   } catch (error) {
     errorMessage.value = getErrorMessage(error, '作业数据加载失败')
   } finally {
@@ -878,23 +870,6 @@ onMounted(load)
 .grading-page {
   max-width: 1180px;
   margin: 0 auto;
-}
-.breadcrumb {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
-  color: #8795a6;
-  font-size: 14px;
-}
-.breadcrumb button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-}
-.breadcrumb strong {
-  color: #263b53;
 }
 .heading {
   display: flex;

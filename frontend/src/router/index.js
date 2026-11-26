@@ -162,12 +162,6 @@ const routes = [
         meta: { title: '作业详情' }
       },
       {
-        path: 'scores',
-        name: 'student-scores',
-        component: () => import('@/views/student/StudentScoresView.vue'),
-        meta: { title: '我的成绩' }
-      },
-      {
         path: 'profile',
         name: 'student-profile',
         component: () => import('@/views/ProfileView.vue'),
