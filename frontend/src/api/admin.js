@@ -14,9 +14,11 @@ export const getAccounts = (params) => getPage('/admin/accounts', params)
 
 export const createAccount = (payload) => http.post('/admin/accounts', payload)
 
-export const importAccounts = (file) => {
+export const importAccounts = (file, role) => {
   const formData = new FormData()
   formData.append('file', file)
+  // 角色由导入入口选择，CSV 里不再写 role 列。
+  if (role) formData.append('role', role)
   return http.post('/admin/accounts/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })

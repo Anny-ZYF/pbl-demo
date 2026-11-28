@@ -282,7 +282,7 @@
             <span>第二步：下载并填写{{ importRoleLabel }}模板</span>
             <el-button link type="primary" @click="downloadImportTemplate">下载{{ importRoleLabel }}模板</el-button>
           </div>
-          <code>role,username,displayName,department,major,class,grade,initialPassword</code>
+          <code>{{ importHeaderText }}</code>
           <p>{{ importTemplateHint }}</p>
           <el-upload
             ref="importUploadRef"
@@ -416,9 +416,24 @@ const importFileList = ref([])
 const importReport = ref(null)
 const importing = ref(false)
 const importRoleLabel = computed(() => importRole.value === 'ROLE_TEACHER' ? '教师账号' : '学生账号')
-const importTemplateHint = computed(() => importRole.value === 'ROLE_TEACHER'
-  ? '教师模板直接填写工号、姓名和学院名称；专业、班级、年级请留空。新学院会自动创建，初始密码留空时为 ABC+工号。'
-  : '学生模板直接填写学号、姓名、学院名称、专业名称、班级名称和年级（如 24莞信管01班）。不存在的学院、专业或班级会自动创建，初始密码留空时为 ABC+学号。')
+// 角色由上面的「账号类型」决定，CSV 里不用再写 role 列；列顺序随意，按表头名匹配。
+const IMPORT_TEMPLATES = {
+  ROLE_STUDENT: {
+    header: '姓名,账号,学院,专业,班级,年级,初始密码',
+    example: '示例学生,20260101,生物医学工程学院,智能科学与技术,24莞信科01班,2026,',
+    hint: '填写学号、姓名、学院、专业、班级和年级（如 24莞信管01班）。不存在的学院、专业或班级会自动创建，初始密码留空时为 ABC+学号。'
+  },
+  ROLE_TEACHER: {
+    header: '姓名,账号,学院,初始密码',
+    example: '示例教师,T2026001,生物医学工程学院,',
+    hint: '填写工号、姓名和学院名称即可。新学院会自动创建，初始密码留空时为 ABC+工号。'
+  }
+}
+const importTemplate = computed(() => IMPORT_TEMPLATES[importRole.value] || null)
+const importHeaderText = computed(() => importTemplate.value?.header || '请先选择账号类型')
+const importTemplateHint = computed(() => importTemplate.value
+  ? `${importTemplate.value.hint}导入类型已在上方选择，表格里不需要再写角色列。`
+  : '')
 const accountForm = reactive({
   role: 'ROLE_STUDENT',
   username: '',
@@ -752,11 +767,12 @@ function handleImportExceed() {
 }
 
 function downloadImportTemplate() {
-  const header = 'role,username,displayName,department,major,class,grade,initialPassword'
-  const examples = importRole.value === 'ROLE_TEACHER'
-    ? ['ROLE_TEACHER,T2026001,示例教师,生物医学工程学院,,,,']
-    : ['ROLE_STUDENT,20260101,示例学生,生物医学工程学院,智能科学与技术,24莞信科01班,2026,']
-  const blob = new Blob([`\uFEFF${header}\r\n${examples.join('\r\n')}\r\n`], {
+  const template = importTemplate.value
+  if (!template) {
+    ElMessage.warning('请先选择账号类型')
+    return
+  }
+  const blob = new Blob([`\uFEFF${template.header}\r\n${template.example}\r\n`], {
     type: 'text/csv;charset=utf-8'
   })
   const url = URL.createObjectURL(blob)
@@ -780,22 +796,9 @@ async function submitImport() {
     return
   }
 
-  const content = (await file.text()).replace(/^\uFEFF/, '')
-  const lines = content.split(/\r?\n/)
-  const normalizedLines = lines.map((line, index) => {
-    if (index === 0 || !line.trim()) return line
-    const separatorIndex = line.indexOf(',')
-    return separatorIndex < 0 ? line : `${importRole.value}${line.slice(separatorIndex)}`
-  })
-  const normalizedFile = new File(
-    [`\uFEFF${normalizedLines.join('\r\n')}`],
-    file.name,
-    { type: 'text/csv;charset=utf-8' }
-  )
-
   importing.value = true
   try {
-    importReport.value = await importAccounts(normalizedFile)
+    importReport.value = await importAccounts(file, importRole.value)
     ElMessage.success(`导入完成：成功 ${importReport.value.successRows} 行，失败 ${importReport.value.failureRows} 行`)
     activeTab.value = 'accounts'
     await Promise.all([loadAccounts(), loadOverview()])

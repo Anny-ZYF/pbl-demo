@@ -1,20 +1,23 @@
 <template>
-  <div v-if="pageCount > 1" class="pager" role="group" aria-label="分页">
-    <button type="button" class="pager__arrow" :disabled="page <= 1" aria-label="上一页" @click="go(page - 1)">‹</button>
-    <span class="pager__text">第</span>
-    <input
-      v-model="draft"
-      class="pager__input"
-      type="text"
-      inputmode="numeric"
-      :title="`输入 1-${pageCount} 之间的页码，回车跳转`"
-      :aria-label="`当前第 ${page} 页，共 ${pageCount} 页，输入页码后回车跳转`"
-      @focus="$event.target.select()"
-      @keydown.enter.prevent="commit"
-      @blur="commit"
-    />
-    <span class="pager__text">/ {{ pageCount }} 页</span>
-    <button type="button" class="pager__arrow" :disabled="page >= pageCount" aria-label="下一页" @click="go(page + 1)">›</button>
+  <div v-if="pageCount > 1" class="pager" :class="{ 'pager--split': !!summary }" role="group" aria-label="分页">
+    <span v-if="summary" class="pager__summary">{{ summary }}</span>
+    <div class="pager__pages">
+      <button type="button" class="pager__arrow" :disabled="page <= 1" aria-label="上一页" @click="go(page - 1)">‹</button>
+      <span class="pager__text">第</span>
+      <input
+        v-model="draft"
+        class="pager__input"
+        type="text"
+        inputmode="numeric"
+        :title="`输入 1-${pageCount} 之间的页码，回车跳转`"
+        :aria-label="`当前第 ${page} 页，共 ${pageCount} 页，输入页码后回车跳转`"
+        @focus="$event.target.select()"
+        @keydown.enter.prevent="commit"
+        @blur="commit"
+      />
+      <span class="pager__text">/ {{ pageCount }} 页</span>
+      <button type="button" class="pager__arrow" :disabled="page >= pageCount" aria-label="下一页" @click="go(page + 1)">›</button>
+    </div>
   </div>
 </template>
 <script setup>
@@ -22,7 +25,9 @@ import { ref, watch } from 'vue'
 
 const props = defineProps({
   page: { type: Number, required: true },
-  pageCount: { type: Number, required: true }
+  pageCount: { type: Number, required: true },
+  // 可选的范围说明，如「1–10 / 共 12 组」；传了会靠左，让页码靠右，和表格分页一致。
+  summary: { type: String, default: '' }
 })
 const emit = defineEmits(['update:page'])
 // 输入框常显当前页，聚焦即全选，直接键入页码后回车或失焦即可跳转。
@@ -50,6 +55,13 @@ const commit = () => {
   color: #8795a6;
   font-size: 13px;
 }
+.pager--split { justify-content: space-between; gap: 14px; }
+.pager__pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pager__summary { white-space: nowrap; }
 .pager__arrow {
   display: grid;
   width: 30px;

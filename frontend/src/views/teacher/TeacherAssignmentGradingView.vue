@@ -118,9 +118,8 @@
     <template v-else>
       <header class="heading">
         <div>
-          <p>SUBMISSION REVIEW</p>
           <h1>{{ assignment?.title || '查看作业' }}</h1>
-          <span>查看团队提交、评分结果和评分运行状态</span>
+          <span></span>
         </div>
         <button type="button" class="back" @click="router.push(`/teacher/course/${courseId}/assignments`)">返回作业列表</button>
       </header>
@@ -137,8 +136,20 @@
       <section class="panel">
         <div class="panel-head">
           <h2>组队情况</h2>
-          <span v-if="hasFilters">{{ filteredRows.length }} / {{ teamRows.length }} 个团队</span>
-          <span v-else>{{ teamRows.length }} 个团队 · {{ submittedRows.length }} 个已提交</span>
+          <div class="panel-head-side">
+            <span v-if="hasFilters">{{ filteredRows.length }} / {{ teamRows.length }} 个团队</span>
+            <span v-else>{{ teamRows.length }} 个团队 · {{ submittedRows.length }} 个已提交</span>
+            <el-dropdown v-if="canExport" trigger="click" @command="exportRoster">
+              <button class="export-button" type="button" :disabled="exporting">{{ exporting ? '导出中…' : '导出名单' }}<i>▾</i></button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="all">全部组队情况（{{ groupedPeople }} 人）</el-dropdown-item>
+                  <el-dropdown-item command="leaders">仅组长（{{ leaderCount }} 人）</el-dropdown-item>
+                  <el-dropdown-item command="ungrouped" divided>仅未组队学生（{{ ungroupedCount }} 人）</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </div>
         <div class="list-toolbar">
           <input v-model="keyword" type="search" placeholder="搜索组号或组长姓名" aria-label="搜索小组" />
@@ -179,9 +190,7 @@
           </div>
         </div>
         <div v-if="pageCount > 1" class="list-pager">
-          <button type="button" :disabled="page === 1" @click="page -= 1">上一页</button>
-          <span>{{ (page - 1) * PAGE_SIZE + 1 }}–{{ Math.min(page * PAGE_SIZE, filteredRows.length) }} / 共 {{ filteredRows.length }} 组</span>
-          <button type="button" :disabled="page === pageCount" @click="page += 1">下一页</button>
+          <PaginationBar v-model:page="page" :page-count="pageCount" :summary="pageRange" />
         </div>
       </section>
       </template>
@@ -199,7 +208,9 @@ import { getAssignments, getAssignmentDetail, getGroupMembers, getGroups, getStu
 import { getErrorMessage } from '@/api/response'
 // 提交附件功能暂时下线：恢复时取消下一行注释（模板注释块、附件函数、.attachment-* 样式一并启用）
 // import { attachmentDisplayName, downloadAuthenticatedFile } from '@/utils/downloadFile'
+import PaginationBar from '@/components/PaginationBar.vue'
 import { groupNumber } from '@/utils/groupSearch'
+import { dateStamp, downloadCsv, safeFileName } from '@/utils/csv'
 import { submissionGroupName, submissionTeamLabel } from '@/utils/submission'
 
 
@@ -380,6 +391,100 @@ const loadMembers = async (rows) => {
 }
 
 const submittedRows = computed(() => teamRows.value.filter((row) => row.submission))
+/* ---------- 导出组队名单 ----------
+   三个范围共用一套列：组号、姓名、学号、班级、是否组长、选题题目。
+   成员是逐组懒加载的，导出前先把没加载过的组补齐，否则会导出半张表。 */
+const exporting = ref(false)
+const groupedPeople = computed(() => teamRows.value.reduce((sum, row) => sum + (Number(row.memberCount) || 0), 0))
+const leaderCount = computed(() => teamRows.value.filter((row) => row.leaderName).length)
+const canExport = computed(() => teamRows.value.length > 0 || ungroupedCount.value > 0)
+
+const ensureAllMembers = async () => {
+  const rows = teamRows.value
+  await loadMembers(rows)
+  // 上一轮还在请求中的组会被 loadMembers 跳过，这里补一次，保证每张表都有缓存键。
+  const missing = rows.filter((row) => row.id != null && !Array.isArray(membersByGroup.value[String(row.id)]))
+  await Promise.all(missing.map(async (row) => {
+    try {
+      membersByGroup.value[String(row.id)] = await getGroupMembers(assignmentId, row.id)
+    } catch {
+      membersByGroup.value[String(row.id)] = []
+    }
+  }))
+}
+
+/* 导出列随范围裁剪：整列没有信息的列不导出，否则表里会出现一列空白，
+   看起来像数据缺失而不是「这一项跟本范围无关」。 */
+const ROSTER_LABELS = {
+  group: '组号',
+  name: '姓名',
+  studentNo: '学号',
+  className: '班级',
+  isLeader: '是否组长',
+  topic: '选题题目'
+}
+const ROSTER_COLUMNS = {
+  // 全部名单：是否组长用 1 / 空表示，方便 Excel 里排序或筛「=1」。
+  all: ['group', 'name', 'studentNo', 'className', 'isLeader', 'topic'],
+  // 仅组长：整列都是同一值，去掉。
+  leaders: ['group', 'name', 'studentNo', 'className', 'topic'],
+  // 未组队：没有小组，组号和选题题目都无意义。
+  ungrouped: ['name', 'studentNo', 'className']
+}
+
+const rosterTable = (scope) => {
+  const classOfStudent = new Map(students.value.map((item) => [String(item.studentId), item.className || '']))
+  const people = []
+  if (scope === 'ungrouped') {
+    for (const student of students.value) {
+      if (Number(student.assignedToGroup)) continue
+      people.push({ name: student.name || '', studentNo: student.studentNo || '', className: student.className || '' })
+    }
+  } else {
+    for (const row of teamRows.value) {
+      const topic = topicText(row) === '—' ? '' : topicText(row)
+      const members = membersOf(row)
+      if (!members.length) continue
+      const picked = scope === 'leaders' ? members.filter((member) => member.role === 'LEADER') : members
+      for (const member of picked) {
+        people.push({
+          group: row.name || '',
+          name: member.name || '',
+          studentNo: member.studentNo || '',
+          className: classOfStudent.get(String(member.studentId)) || '',
+          isLeader: member.role === 'LEADER' ? 1 : '',
+          topic
+        })
+      }
+    }
+  }
+  const columns = ROSTER_COLUMNS[scope] || ROSTER_COLUMNS.all
+  return {
+    headers: columns.map((key) => ROSTER_LABELS[key]),
+    rows: people.map((person) => columns.map((key) => person[key] ?? ''))
+  }
+}
+
+const exportRoster = async (scope) => {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    if (scope !== 'ungrouped') await ensureAllMembers()
+    const { headers, rows } = rosterTable(scope)
+    if (!rows.length) {
+      ElMessage.warning('这个范围暂时没有可导出的记录')
+      return
+    }
+    const title = safeFileName(assignment.value?.title, '作业')
+    downloadCsv(`${title}-组队名单-${dateStamp()}.csv`, headers, rows)
+    ElMessage.success(`已导出 ${rows.length} 条记录`)
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '导出失败，请稍后重试'))
+  } finally {
+    exporting.value = false
+  }
+}
+
 
 const keyword = ref('')
 const statusFilter = ref('all')
@@ -415,6 +520,8 @@ const PAGE_SIZE = 10
 const page = ref(1)
 const pageCount = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / PAGE_SIZE)))
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+// 当前页覆盖的组序号区间，导出的分页条靠左显示。
+const pageRange = computed(() => `${(page.value - 1) * PAGE_SIZE + 1}–${Math.min(page.value * PAGE_SIZE, filteredRows.value.length)} / 共 ${filteredRows.value.length} 组`)
 watch([keyword, statusFilter], () => { page.value = 1 })
 watch(pageCount, (count) => { if (page.value > count) page.value = count })
 watch(pagedRows, (rows) => { loadMembers(rows) }, { immediate: true })
@@ -964,28 +1071,12 @@ onMounted(load)
   background: #eaf2fa;
 }
 .list-pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 11px 22px;
+  padding: 12px 22px;
   border-top: 1px solid #edf1f4;
-  color: #98a5b3;
-  font-size: 12px;
 }
-.list-pager button {
-  padding: 6px 13px;
-  border: 1px solid #dbe3ea;
-  border-radius: 6px;
-  background: #fff;
-  color: #356798;
+.list-pager :deep(.pager) {
+  margin: 0;
   font-size: 12px;
-  cursor: pointer;
-}
-.list-pager button:disabled {
-  color: #b6c0cc;
-  background: #f7f9fb;
-  cursor: not-allowed;
 }
 .panel {
   border-radius: 8px;
@@ -994,9 +1085,45 @@ onMounted(load)
 }
 .panel-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 18px 22px;
   border-bottom: 1px solid #edf1f4;
+}
+.panel-head-side {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid #d8e2ee;
+  border-radius: 6px;
+  color: #356798;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.export-button:hover:not(:disabled) {
+  border-color: #a9c3e0;
+  color: #2c5985;
+  background: #f6faff;
+}
+.export-button:disabled {
+  color: #a9b6c4;
+  border-color: #e6ecf3;
+  background: #f7f9fb;
+  cursor: not-allowed;
+}
+.export-button i {
+  color: #8ba4bf;
+  font-size: 11px;
+  font-style: normal;
 }
 .panel-head h2 {
   margin: 0;

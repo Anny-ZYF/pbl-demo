@@ -53,8 +53,9 @@ public class AdminController {
     @PostMapping(value = "/accounts/import", consumes = "multipart/form-data")
     public ApiResponse<AccountImportService.ImportReport> importAccounts(
             @AuthenticationPrincipal UserPrincipal admin,
-            @RequestPart("file") org.springframework.web.multipart.MultipartFile file) {
-        return ApiResponse.ok(importService.importCsv(admin, file));
+            @RequestPart("file") org.springframework.web.multipart.MultipartFile file,
+            @RequestParam(value = "role", required = false) String role) {
+        return ApiResponse.ok(importService.importCsv(admin, file, role));
     }
 
     @PutMapping("/accounts/{id}")

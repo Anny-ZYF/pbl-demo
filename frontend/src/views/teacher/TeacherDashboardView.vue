@@ -12,14 +12,25 @@
     <div v-else class="content-grid">
       <section class="panel project-progress">
         <div class="section-header">
-          <h2>项目进度</h2>
+          <h2>作业进度</h2>
           <span>{{ assignments.length }} 个作业</span>
         </div>
         <div v-if="recentFourAssignments.length" class="progress-list">
-          <div v-for="item in recentFourAssignments" :key="item.id" class="progress-item">
+          <div
+            v-for="item in recentFourAssignments"
+            :key="item.id"
+            class="progress-item"
+            role="link"
+            tabindex="0"
+            :aria-label="`查看「${item.title}」的作业情况`"
+            :title="`进入「${item.title}」的查看作业`"
+            @click="openAssignment(item)"
+            @keydown.enter.prevent="openAssignment(item)"
+            @keydown.space.prevent="openAssignment(item)"
+          >
             <div class="progress-title">
               <strong>{{ item.title }}</strong>
-              <span>{{ assignmentProgress(item) }}%</span>
+              <span class="progress-value">{{ assignmentProgress(item) }}%<i>›</i></span>
             </div>
             <div class="progress-track">
               <span :style="{ width: `${assignmentProgress(item)}%` }"></span>
@@ -115,6 +126,8 @@ const recentFourAssignments = computed(() => {
     .slice(0, 4)
 })
 
+// 进度条目直接进「查看作业」：工作台看的是整体进度，下一步动作通常是看这一项作业的组队与提交情况。
+const openAssignment = (item) => router.push({ name: 'teacher-assignment-grading', params: { courseId: route.params.courseId, assignmentId: item.id } })
 const remainingDays = (value) => { if (!value) return '未设置截止日期'; const days = Math.ceil((new Date(value).getTime() - Date.now()) / 86400000); return days > 0 ? `${days}天剩余` : '已截止' }
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('zh-CN') : '未设置'
 const destroyCharts = () => { submissionChart?.destroy(); gradeChart?.destroy() }
@@ -131,5 +144,5 @@ onMounted(loadDashboard); onBeforeUnmount(destroyCharts)
 <style scoped>
 .teacher-home{padding:0}.breadcrumb{display:flex;gap:8px;align-items:center;margin-bottom:22px;color:#748294;font-size:14px}.breadcrumb button{padding:0;border:0;color:inherit;background:transparent;cursor:pointer}.breadcrumb strong{color:#263b53}.error-box{margin-bottom:16px;padding:12px 16px;border:1px solid #f4c7c7;border-radius:6px;color:#b42318;background:#fff5f5}.page-header{margin-bottom:24px;text-align:center}.page-header h1{margin:0;color:#263b53;font-size:30px}.page-header p{margin:9px 0 0;color:#8492a4;font-size:18px}.stats-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-bottom:24px}.stat-card{display:flex;align-items:center;justify-content:space-between;padding:22px 24px;border-radius:8px;background:#fff;box-shadow:0 2px 9px rgba(0,0,0,.08)}.stat-card p{margin:0;color:#657487;font-size:16px}.stat-card strong{display:block;margin-top:7px;color:#263b53;font-size:32px}.stat-card i{display:grid;width:54px;height:54px;place-items:center;border-radius:50%;color:#6bb58b;background:#eff8f3;font-style:normal;font-size:22px}.content-grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:24px}.panel{overflow:hidden;border-radius:8px;background:#fff;box-shadow:0 2px 9px rgba(0,0,0,.08)}.section-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #edf1f4}.section-header h2{margin:0;color:#263b53;font-size:17px}.section-header span{color:#6bb58b;font-size:13px}.chart-box{position:relative;height:260px;padding:18px 20px}.task-item{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #edf1f4}.check{width:14px;height:14px;border:1px solid #aab6c2;border-radius:3px}.task-item div{display:grid;flex:1;gap:5px}.task-item strong{color:#334155;font-size:13px}.task-item small,.task-item em{color:#94a3b8;font-size:11px}.task-item em{font-style:normal}.visualization{margin-bottom:24px}.charts-container{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:20px}.charts-container h3{margin:0;text-align:center;color:#334155;font-size:15px}@media(max-width:900px){.content-grid,.charts-container{grid-template-columns:1fr}}@media(max-width:600px){.stats-cards{grid-template-columns:1fr}.page-header h1{font-size:25px}}
 .stat-card>div{display:flex;align-items:baseline;gap:14px}.stat-card strong{margin-top:0;line-height:1}.progress-list{padding:8px 20px 16px;}
-.progress-item{padding:18px 0;border-bottom:1px solid #edf1f4}.progress-item:last-child{border-bottom:0}.progress-title,.progress-meta{display:flex;align-items:center;justify-content:space-between}.progress-title strong{color:#263b53;font-size:16px}.progress-title span{color:#52708d;font-size:15px}.progress-track{height:12px;margin:14px 0 8px;border-radius:999px;background:#eef0f2}.progress-track span{display:block;height:100%;border-radius:999px;background:#6bb58b;transition:width .3s ease}.progress-meta{color:#8492a4;font-size:13px}
+.progress-item{margin:0 -20px;padding:16px 20px;border-bottom:1px solid #edf1f4;cursor:pointer;transition:background .15s}.progress-item:hover{background:#f6faff}.progress-item:focus-visible{outline:2px solid #6b9ed8;outline-offset:-2px;border-radius:6px}.progress-item:last-child{border-bottom:0}.progress-title,.progress-meta{display:flex;align-items:center;justify-content:space-between}.progress-title strong{color:#263b53;font-size:16px}.progress-title span{color:#52708d;font-size:15px}.progress-value{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto}.progress-value i{color:#a8bccf;font-size:17px;font-style:normal;line-height:1;transition:transform .15s,color .15s}.progress-item:hover .progress-title strong{color:#356798}.progress-item:hover .progress-value i{color:#356798;transform:translateX(3px)}.progress-track{height:12px;margin:14px 0 8px;border-radius:999px;background:#eef0f2}.progress-track span{display:block;height:100%;border-radius:999px;background:#6bb58b;transition:width .3s ease}.progress-meta{color:#8492a4;font-size:13px}
 </style>

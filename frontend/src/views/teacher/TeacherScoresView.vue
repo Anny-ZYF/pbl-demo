@@ -71,6 +71,7 @@ import { useRoute } from 'vue-router'
 import { ElEmpty, ElIcon, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import { downloadCsv, safeFileName } from '@/utils/csv'
 import ScoreAppealsDialog from '@/components/teacher/ScoreAppealsDialog.vue'
 import { getAssignments, getCourses, getSubmissions, getTeacherScores, publishScoringRun } from '@/api/teacher'
 import { getErrorMessage } from '@/api/response'
@@ -189,29 +190,14 @@ watch(groupPageCount, (count) => { if (page.value > count) page.value = count })
 
 const exportScores = () => {
   const headers = ['学号', '专业', '班级', '姓名', '成绩']
-  const escapeCell = value => {
-    const text = value == null ? '' : String(value)
-    const safeText = /^[\s]*[=+@\-]/.test(text) ? `'${text}` : text
-    return `"${safeText.replaceAll('"', '""')}"`
-  }
-  const rows = [headers, ...scores.value.map(student => [
+  const rows = scores.value.map((student) => [
     student.studentNo,
     student.majorName,
     student.className,
     student.name,
     student.individualFinalScore
-  ])]
-  const csv = `\uFEFF${rows.map(row => row.map(escapeCell).join(',')).join('\r\n')}`
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  const safeTitle = (selectedAssignment.value?.title || '作业成绩').replace(/[\\\\/:*?"<>|]/g, '_')
-  link.href = url
-  link.download = `${safeTitle}-成绩.csv`
-  document.body.append(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+  ])
+  downloadCsv(`${safeFileName(selectedAssignment.value?.title, '作业成绩')}-成绩.csv`, headers, rows)
 }
 
 const selectAssignment = async (id) => {

@@ -310,13 +310,14 @@ Authorization: Bearer <accessToken>
 {"role":"STUDENT","newPassword":"Reset2026Password"}
 ```
 
-CSV 导入要求 UTF-8、`.csv`、不超过 2 MB、最多 5000 条数据，表头必须严格为：
+CSV 导入要求 UTF-8、`.csv`、不超过 2 MB、最多 5000 条数据。导入角色由 multipart 表单字段 `role` 决定（`ROLE_STUDENT` / `ROLE_TEACHER`，也接受 `学生` / `教师`），**CSV 里不需要再写角色列**。表头用中文、列顺序不限，按表头名匹配：
 
 ```text
-role,username,displayName,department,major,class,grade,initialPassword
+学生：姓名,账号,学院,专业,班级,年级,初始密码
+教师：姓名,账号,学院,初始密码
 ```
 
-`department`、`major`、`class` 直接填写学院名称、专业名称和班级名称（如 `24莞信管01班`），不填写数据库 ID。班级按学院唯一，与 `major` 无关；导入按 `(学院, 班级名称)` 复用班级，不存在的班级自动在该学院下创建并启用。教师行只填写 `department`，学生行还必须填写 `major`、`class` 和 `grade`。`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
+历史英文表头（`role,username,displayName,department,major,class,grade,initialPassword`）继续兼容，行内 `role` 有值时以行内为准；`displayName` 与 `name` 等价。`department`、`major`、`class` 直接填写学院名称、专业名称和班级名称（如 `24莞信管01班`），不填写数据库 ID。班级按学院唯一，与 `major` 无关；导入按 `(学院, 班级名称)` 复用班级，不存在的班级自动在该学院下创建并启用。教师行只填写 `department`，学生行还必须填写 `major`、`class` 和 `grade`。`ImportReport` 为 `{totalRows,successRows,failureRows,createdAccounts,errors:[{row,message}]}`。导入按行处理，可能部分成功，不是全文件原子事务。
 
 ### 4.4 课程、模型、运行、异常与审计
 

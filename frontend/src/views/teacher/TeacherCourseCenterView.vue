@@ -2,7 +2,6 @@
   <section class="course-center-page">
     <header class="course-center-header">
       <div>
-        <p class="eyebrow">TEACHER WORKSPACE</p>
         <h1>我的授课课程</h1>
         <p>选择一门课程进入课程工作区，管理作业、团队与评分。</p>
       </div>
